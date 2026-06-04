@@ -37,6 +37,80 @@ function h(tag: string, attrs: Attrs = {}, ...children: (Node | string)[]): HTML
 const $ = <T extends HTMLElement>(selector: string): T =>
   document.querySelector(selector) as T;
 
+// ---------- Celebration / motion ----------
+
+const prefersReducedMotion = (): boolean =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Timers for the staged knockout reveal — cleared whenever we re-render so a
+// fresh simulation never overlaps with a reveal still playing from the last one.
+let revealTimers: number[] = [];
+function clearRevealTimers(): void {
+  for (const id of revealTimers) clearTimeout(id);
+  revealTimers = [];
+}
+const later = (fn: () => void, ms: number): void => {
+  revealTimers.push(window.setTimeout(fn, ms));
+};
+
+const CONFETTI_COLORS = ["#2ee6a6", "#ffce4d", "#ff5d8f", "#5aa7ff", "#41d8c4", "#ffffff"];
+
+let confettiLayer: HTMLElement | null = null;
+function celebrationLayer(): HTMLElement {
+  if (!confettiLayer) {
+    confettiLayer = h("div", { class: "confetti-layer", "aria-hidden": "true" });
+    document.body.append(confettiLayer);
+  }
+  return confettiLayer;
+}
+
+// Fire a burst of confetti pieces from a viewport-relative origin (0–1 on each
+// axis). Each piece is a short-lived DOM node that removes itself when done.
+function confettiBurst(count: number, originX: number, originY: number): void {
+  if (prefersReducedMotion()) return;
+  const layer = celebrationLayer();
+  const ox = originX * window.innerWidth;
+  const oy = originY * window.innerHeight;
+  for (let i = 0; i < count; i++) {
+    const piece = document.createElement("span");
+    piece.className = "confetti";
+    const angle = Math.random() * Math.PI * 2;
+    const velocity = 90 + Math.random() * 240;
+    const dx = Math.cos(angle) * velocity;
+    const dy = Math.sin(angle) * velocity - (130 + Math.random() * 150);
+    const size = 6 + Math.random() * 7;
+    piece.style.left = `${ox}px`;
+    piece.style.top = `${oy}px`;
+    piece.style.inlineSize = `${size}px`;
+    piece.style.blockSize = `${size * (0.5 + Math.random())}px`;
+    piece.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+    piece.style.setProperty("--dx", `${dx}px`);
+    piece.style.setProperty("--dy", `${dy}px`);
+    piece.style.setProperty("--rot", `${Math.random() * 720 - 360}deg`);
+    piece.style.setProperty("--dur", `${1200 + Math.random() * 1000}ms`);
+    if (Math.random() > 0.5) piece.style.borderRadius = "50%";
+    piece.addEventListener("animationend", () => piece.remove(), { once: true });
+    layer.append(piece);
+  }
+}
+
+// A localized burst centred over an element (e.g. a freshly revealed round).
+function burstOver(el: HTMLElement, count: number): void {
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0) return;
+  const x = (rect.left + rect.width / 2) / window.innerWidth;
+  const y = Math.max(0.08, rect.top / window.innerHeight + 0.04);
+  confettiBurst(count, x, y);
+}
+
+// Apply a staggered entrance to a set of cards by indexing a CSS custom prop.
+function stagger(nodes: HTMLElement[]): void {
+  nodes.forEach((node, i) => {
+    node.classList.add("stagger");
+    node.style.setProperty("--i", String(i));
+  });
+}
+
 const els = {
   seed: $<HTMLInputElement>("#seed-input"),
   simulate: $<HTMLButtonElement>("#simulate-btn"),
@@ -107,6 +181,7 @@ function teamCell(code: string): HTMLElement {
 
 function renderGroupPreview(teams: Team[]): void {
   const grid = h("div", { class: "group-grid" });
+  const cards: HTMLElement[] = [];
   for (const letter of groupLetters) {
     const members = teams
       .filter((t) => t.group === letter)
@@ -132,8 +207,10 @@ function renderGroupPreview(teams: Team[]): void {
       );
     }
     card.append(table);
+    cards.push(card);
     grid.append(card);
   }
+  stagger(cards);
 
   els.panels.groups.replaceChildren(
     h(
@@ -152,9 +229,13 @@ function renderGroups(result: TournamentResult): void {
   );
 
   const grid = h("div", { class: "group-grid" });
+  const cards: HTMLElement[] = [];
   for (const group of result.groups) {
-    grid.append(groupCard(group, qualifiedThirds));
+    const card = groupCard(group, qualifiedThirds);
+    cards.push(card);
+    grid.append(card);
   }
+  stagger(cards);
 
   els.panels.groups.replaceChildren(
     h(
@@ -257,21 +338,28 @@ function thirdPlaceTable(table: Standing[]): HTMLElement {
 const BRACKET_ROUNDS = ["Round of 32", "Round of 16", "Quarter-finals", "Semi-finals", "Final"];
 
 function renderKnockout(result: TournamentResult): void {
+  clearRevealTimers();
   const byName = new Map(result.knockout.map((r) => [r.name, r]));
 
+  // The podium reveals last so the champion stays a surprise until the bracket
+  // has played through every round.
   const podium = h(
     "div",
-    { class: "podium" },
+    { class: "podium reveal-pending" },
     medalCard("gold", "🥇 Champions", result.champion),
     medalCard("silver", "🥈 Runners-up", result.runnerUp),
     medalCard("bronze", "🥉 Third place", result.third),
   );
 
   const bracket = h("div", { class: "bracket" });
+  const columns: HTMLElement[] = [];
   for (const roundName of BRACKET_ROUNDS) {
     const round = byName.get(roundName);
     if (!round) continue;
-    bracket.append(roundColumn(round, result.champion));
+    const column = roundColumn(round, result.champion);
+    column.classList.add("reveal-pending");
+    columns.push(column);
+    bracket.append(column);
   }
 
   const children: (Node | string)[] = [
@@ -298,6 +386,42 @@ function renderKnockout(result: TournamentResult): void {
   }
 
   els.panels.knockout.replaceChildren(...children);
+  playKnockoutReveal(columns, podium, result.champion);
+}
+
+// Reveal the bracket one round at a time — each newly shown round is a set of
+// teams that just advanced, so we pop a small confetti burst over it. When the
+// final round lands, the podium drops in with a full championship celebration.
+function playKnockoutReveal(
+  columns: HTMLElement[],
+  podium: HTMLElement,
+  champion: string,
+): void {
+  if (prefersReducedMotion()) {
+    for (const column of columns) column.classList.remove("reveal-pending");
+    podium.classList.remove("reveal-pending");
+    return;
+  }
+
+  const step = 560;
+  columns.forEach((column, idx) => {
+    later(() => {
+      column.classList.remove("reveal-pending");
+      column.classList.add("revealed");
+      if (idx > 0) burstOver(column, 18); // teams advancing into this round
+    }, idx * step);
+  });
+
+  later(() => {
+    podium.classList.remove("reveal-pending");
+    podium.classList.add("celebrate");
+    setStatus(
+      `🏆 ${flagOf(champion)} ${nameOf(champion)} are World Cup champions!`,
+    );
+    confettiBurst(140, 0.5, 0.3);
+    later(() => confettiBurst(80, 0.22, 0.4), 220);
+    later(() => confettiBurst(80, 0.78, 0.4), 440);
+  }, columns.length * step + 150);
 }
 
 function medalCard(kind: string, label: string, code: string): HTMLElement {
@@ -358,10 +482,10 @@ function renderOdds(result: OddsResult): void {
   const max = result.odds[0]?.champion || 1;
 
   const list = h("div", { class: "odds-list" });
+  const rows: HTMLElement[] = [];
   result.odds.forEach((o, i) => {
     const width = o.champion > 0 ? Math.max(2, (o.champion / max) * 100) : 0;
-    list.append(
-      h(
+    const row = h(
         "div",
         { class: "odds-row" },
         h("span", { class: "rank" }, String(i + 1)),
@@ -379,9 +503,11 @@ function renderOdds(result: OddsResult): void {
         ),
         h("span", { class: "bar-wrap" }, h("span", { class: "bar", style: `--w:${width}%` })),
         h("span", { class: "pct" }, pct(o.champion)),
-      ),
-    );
+      );
+    rows.push(row);
+    list.append(row);
   });
+  stagger(rows);
 
   els.panels.odds.replaceChildren(
     h(
@@ -411,12 +537,16 @@ async function runSimulation(): Promise<void> {
     const result = await simulate(seed);
     els.seed.value = String(result.seed);
     renderGroups(result);
-    renderKnockout(result);
     activateTab("knockout");
-    setStatus(
-      `${flagOf(result.champion)} ${nameOf(result.champion)} win the World Cup! ` +
-        `(seed ${result.seed} — edit the seed box and Simulate again to reproduce)`,
-    );
+    renderKnockout(result);
+    if (prefersReducedMotion()) {
+      setStatus(
+        `${flagOf(result.champion)} ${nameOf(result.champion)} win the World Cup! ` +
+          `(seed ${result.seed} — edit the seed box and Simulate again to reproduce)`,
+      );
+    } else {
+      setStatus("Playing through the knockout rounds…");
+    }
   } catch (err) {
     console.error(err);
     setStatus("Simulation failed — is the server running?", "error");
