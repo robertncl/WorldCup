@@ -1,0 +1,16 @@
+# Frontend build output & dependencies
+/frontend/dist/
+/frontend/node_modules/
+/frontend/bun.lock
+/frontend/*.tsbuildinfo
+
+# Go build artifacts
+/backend/worldcup
+/backend/worldcup.exe
+*.test
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*~
