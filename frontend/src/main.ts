@@ -403,7 +403,7 @@ function playKnockoutReveal(
     return;
   }
 
-  const step = 560;
+  const step = 1100;
   columns.forEach((column, idx) => {
     later(() => {
       column.classList.remove("reveal-pending");
