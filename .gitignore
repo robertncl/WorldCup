@@ -1,7 +1,8 @@
 # Frontend build output & dependencies
 /frontend/dist/
 /frontend/node_modules/
-/frontend/bun.lock
+# bun.lock is committed so the dependency SHA-512 integrity pins are enforced
+# on every checkout / CI install.
 /frontend/*.tsbuildinfo
 
 # Go build artifacts

@@ -33,6 +33,11 @@ func main() {
 		Addr:              *addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		// The heaviest endpoint (/api/odds?runs=50000) completes in ~3s; 30s
+		// leaves ample headroom while still capping slow-read clients.
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	log.Printf("⚽ World Cup 2026 simulator listening on http://localhost%s", *addr)

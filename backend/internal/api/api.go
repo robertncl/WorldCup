@@ -4,6 +4,7 @@ package api
 
 import (
 	"encoding/json"
+	"html"
 	"math/rand"
 	"net/http"
 	"os"
@@ -43,7 +44,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/simulate", s.handleSimulate)
 	mux.HandleFunc("/api/odds", s.handleOdds)
 	mux.HandleFunc("/", s.handleStatic)
-	return withCORS(mux)
+	return withSecurityHeaders(withCORS(mux))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -137,7 +138,7 @@ func writeBuildHint(w http.ResponseWriter, staticDir string) {
 		`<p>From the <code>frontend</code> directory run:</p>` +
 		`<pre><code>bun install   # first time only
 bun run build</code></pre>` +
-		`<p>Expected static directory: <code>` + staticDir + `</code></p>` +
+		`<p>Expected static directory: <code>` + html.EscapeString(staticDir) + `</code></p>` +
 		`<p>The JSON API is available now at <a href="/api/teams">/api/teams</a>, ` +
 		`<a href="/api/simulate">/api/simulate</a>, and <a href="/api/odds?runs=2000">/api/odds</a>.</p>` +
 		`</body></html>`))
@@ -150,6 +151,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(v)
+}
+
+// withSecurityHeaders applies conservative hardening headers to every response.
+// (A Content-Security-Policy is intentionally omitted because the SPA relies on
+// inline styles and an inline module; add one once those are externalised.)
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // withCORS allows the API to be called from a separate dev server origin.

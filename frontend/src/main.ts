@@ -25,7 +25,6 @@ function h(tag: string, attrs: Attrs = {}, ...children: (Node | string)[]): HTML
   for (const [key, value] of Object.entries(attrs)) {
     if (value == null || value === false) continue;
     if (key === "class") node.className = String(value);
-    else if (key === "html") node.innerHTML = String(value);
     else node.setAttribute(key, String(value));
   }
   for (const child of children) {
@@ -143,7 +142,12 @@ function setStatus(message: string | Node, kind: "info" | "error" = "info"): voi
 }
 
 function setBusy(message: string): void {
-  els.status.innerHTML = `<span class="spin"></span>${message}`;
+  // Build nodes rather than interpolating into innerHTML so the message can
+  // never be parsed as HTML.
+  els.status.replaceChildren(
+    h("span", { class: "spin", "aria-hidden": "true" }),
+    document.createTextNode(message),
+  );
   els.status.dataset.kind = "info";
   els.status.classList.add("show");
 }
