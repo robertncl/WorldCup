@@ -14,7 +14,7 @@
 
   --text: #eaf1fb;
   --muted: #a3b4cc;
-  --faint: #7c8eaa;
+  --faint: #8f9fbb; /* ≥4.5:1 on cards and bg (AA) while staying below --muted */
 
   --accent: #2ee6a6; /* pitch green */
   --accent-2: #ffce4d; /* trophy gold */
