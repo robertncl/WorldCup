@@ -337,8 +337,21 @@ function thirdPlaceTable(table: Standing[]): HTMLElement {
 
 const BRACKET_ROUNDS = ["Round of 32", "Round of 16", "Quarter-finals", "Semi-finals", "Final"];
 
+const ROUND_SHORT: Record<string, string> = {
+  "Round of 32": "R32",
+  "Round of 16": "R16",
+  "Quarter-finals": "QF",
+  "Semi-finals": "SF",
+  Final: "Final",
+};
+
+// Tracks which round is most visible so its jump-link can be highlighted.
+// Disconnected on each re-render so stale observers don't pile up.
+let roundObserver: IntersectionObserver | null = null;
+
 function renderKnockout(result: TournamentResult): void {
   clearRevealTimers();
+  roundObserver?.disconnect();
   const byName = new Map(result.knockout.map((r) => [r.name, r]));
 
   // The podium reveals last so the champion stays a surprise until the bracket
@@ -353,23 +366,28 @@ function renderKnockout(result: TournamentResult): void {
 
   const bracket = h("div", { class: "bracket" });
   const columns: HTMLElement[] = [];
+  const roundNames: string[] = [];
   for (const roundName of BRACKET_ROUNDS) {
     const round = byName.get(roundName);
     if (!round) continue;
     const column = roundColumn(round, result.champion);
     column.classList.add("reveal-pending");
     columns.push(column);
+    roundNames.push(roundName);
     bracket.append(column);
   }
+
+  const roundNav = buildRoundNav(roundNames, columns, bracket);
 
   const children: (Node | string)[] = [
     h(
       "div",
       { class: "section-title" },
       "Knockout bracket",
-      h("span", { class: "hint" }, "32 teams · single elimination"),
+      h("span", { class: "hint" }, "32 teams · single elimination · jump to any round →"),
     ),
     podium,
+    roundNav,
     bracket,
   ];
 
@@ -422,6 +440,70 @@ function playKnockoutReveal(
     later(() => confettiBurst(80, 0.22, 0.4), 220);
     later(() => confettiBurst(80, 0.78, 0.4), 440);
   }, columns.length * step + 150);
+}
+
+// A row of pill links — one per round — that scroll the bracket to that round
+// and flash it. An IntersectionObserver keeps the link for the round currently
+// in view highlighted as the user scrolls.
+function buildRoundNav(
+  roundNames: string[],
+  columns: HTMLElement[],
+  bracket: HTMLElement,
+): HTMLElement {
+  const nav = h("nav", { class: "round-nav", "aria-label": "Jump to round" });
+  const links = roundNames.map((name, idx) => {
+    const link = h(
+      "button",
+      { type: "button", class: "round-link" },
+      ROUND_SHORT[name] ?? name,
+    );
+    link.addEventListener("click", () => {
+      setActiveRoundLink(links, idx);
+      scrollToRound(bracket, columns[idx]);
+    });
+    nav.append(link);
+    return link;
+  });
+
+  // Highlight whichever round is most visible inside the scroller.
+  const ratios = new Map<Element, number>();
+  roundObserver = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) ratios.set(e.target, e.isIntersecting ? e.intersectionRatio : 0);
+      let bestIdx = 0;
+      let best = -1;
+      columns.forEach((col, i) => {
+        const r = ratios.get(col) ?? 0;
+        if (r > best) {
+          best = r;
+          bestIdx = i;
+        }
+      });
+      setActiveRoundLink(links, bestIdx);
+    },
+    { root: bracket, threshold: [0.25, 0.5, 0.75, 1] },
+  );
+  for (const col of columns) roundObserver.observe(col);
+
+  return nav;
+}
+
+function setActiveRoundLink(links: HTMLElement[], idx: number): void {
+  links.forEach((link, i) => link.classList.toggle("active", i === idx));
+}
+
+function scrollToRound(bracket: HTMLElement, column: HTMLElement): void {
+  const delta = column.getBoundingClientRect().left - bracket.getBoundingClientRect().left;
+  bracket.scrollTo({
+    left: Math.max(0, bracket.scrollLeft + delta - 16),
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+  });
+  // Flash the target so it's obvious which round was jumped to, even when the
+  // bracket already fits on screen and no scrolling happens.
+  column.classList.remove("flash");
+  void column.offsetWidth; // force reflow to restart the animation
+  column.classList.add("flash");
+  column.addEventListener("animationend", () => column.classList.remove("flash"), { once: true });
 }
 
 function medalCard(kind: string, label: string, code: string): HTMLElement {
