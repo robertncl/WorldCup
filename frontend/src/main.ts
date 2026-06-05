@@ -386,8 +386,8 @@ function renderKnockout(result: TournamentResult): void {
       "Knockout bracket",
       h("span", { class: "hint" }, "32 teams · single elimination · jump to any round →"),
     ),
-    podium,
     roundNav,
+    podium,
     bracket,
   ];
 
@@ -421,7 +421,7 @@ function playKnockoutReveal(
     return;
   }
 
-  const step = 1100;
+  const step = 1700;
   columns.forEach((column, idx) => {
     later(() => {
       column.classList.remove("reveal-pending");
