@@ -45,15 +45,15 @@
     <div id="status" class="status" role="status" aria-live="polite"></div>
 
     <nav class="tab-bar" role="tablist" aria-label="Views">
-      <button class="tab" role="tab" id="tab-groups" data-tab="groups" aria-selected="true">Groups</button>
-      <button class="tab" role="tab" id="tab-knockout" data-tab="knockout" aria-selected="false">Knockout</button>
-      <button class="tab" role="tab" id="tab-odds" data-tab="odds" aria-selected="false">Odds</button>
+      <button class="tab" role="tab" id="tab-groups" data-tab="groups" aria-controls="panel-groups" aria-selected="true" tabindex="0">Groups</button>
+      <button class="tab" role="tab" id="tab-knockout" data-tab="knockout" aria-controls="panel-knockout" aria-selected="false" tabindex="-1">Knockout</button>
+      <button class="tab" role="tab" id="tab-odds" data-tab="odds" aria-controls="panel-odds" aria-selected="false" tabindex="-1">Odds</button>
     </nav>
 
     <main>
-      <section id="panel-groups" class="panel" role="tabpanel" aria-labelledby="tab-groups"></section>
-      <section id="panel-knockout" class="panel" role="tabpanel" aria-labelledby="tab-knockout" hidden></section>
-      <section id="panel-odds" class="panel" role="tabpanel" aria-labelledby="tab-odds" hidden></section>
+      <section id="panel-groups" class="panel" role="tabpanel" aria-labelledby="tab-groups" tabindex="0"></section>
+      <section id="panel-knockout" class="panel" role="tabpanel" aria-labelledby="tab-knockout" tabindex="0" hidden></section>
+      <section id="panel-odds" class="panel" role="tabpanel" aria-labelledby="tab-odds" tabindex="0" hidden></section>
     </main>
 
     <footer class="app-footer">

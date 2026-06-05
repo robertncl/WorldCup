@@ -152,14 +152,31 @@ function setBusy(message: string): void {
 
 function setupTabs(): void {
   const tabs = [...document.querySelectorAll<HTMLButtonElement>(".tab")];
-  for (const tab of tabs) {
+  tabs.forEach((tab) => {
     tab.addEventListener("click", () => activateTab(tab.dataset.tab ?? "groups"));
-  }
+    // Tab widgets must be arrow-key navigable (WAI-ARIA tabs pattern); plain
+    // buttons only give Tab-key traversal, so add roving focus + activation.
+    tab.addEventListener("keydown", (e) => {
+      const idx = tabs.indexOf(tab);
+      let next = -1;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % tabs.length;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx - 1 + tabs.length) % tabs.length;
+      else if (e.key === "Home") next = 0;
+      else if (e.key === "End") next = tabs.length - 1;
+      else return;
+      e.preventDefault();
+      const target = tabs[next];
+      activateTab(target.dataset.tab ?? "groups");
+      target.focus();
+    });
+  });
 }
 
 function activateTab(name: string): void {
   for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
-    tab.setAttribute("aria-selected", String(tab.dataset.tab === name));
+    const selected = tab.dataset.tab === name;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1; // roving tabindex
   }
   for (const [key, panel] of Object.entries(els.panels)) {
     panel.hidden = key !== name;
@@ -216,7 +233,7 @@ function renderGroupPreview(teams: Team[]): void {
     h(
       "div",
       { class: "section-title" },
-      "Group draw",
+      h("h2", {}, "Group draw"),
       h("span", { class: "hint" }, "12 groups of 4 · press Simulate to play the matches"),
     ),
     grid,
@@ -241,7 +258,7 @@ function renderGroups(result: TournamentResult): void {
     h(
       "div",
       { class: "section-title" },
-      "Group stage",
+      h("h2", {}, "Group stage"),
       h("span", { class: "hint" }, "Top 2 advance · best 8 third-placed teams also qualify"),
     ),
     grid,
@@ -364,7 +381,12 @@ function renderKnockout(result: TournamentResult): void {
     medalCard("bronze", "🥉 Third place", result.third),
   );
 
-  const bracket = h("div", { class: "bracket" });
+  const bracket = h("div", {
+    class: "bracket",
+    role: "group",
+    "aria-label": "Knockout bracket — scroll horizontally to see every round",
+    tabindex: "0",
+  });
   const columns: HTMLElement[] = [];
   const roundNames: string[] = [];
   for (const roundName of BRACKET_ROUNDS) {
@@ -383,7 +405,7 @@ function renderKnockout(result: TournamentResult): void {
     h(
       "div",
       { class: "section-title" },
-      "Knockout bracket",
+      h("h2", {}, "Knockout bracket"),
       h("span", { class: "hint" }, "32 teams · single elimination · jump to any round →"),
     ),
     roundNav,
@@ -489,7 +511,12 @@ function buildRoundNav(
 }
 
 function setActiveRoundLink(links: HTMLElement[], idx: number): void {
-  links.forEach((link, i) => link.classList.toggle("active", i === idx));
+  links.forEach((link, i) => {
+    const active = i === idx;
+    link.classList.toggle("active", active);
+    if (active) link.setAttribute("aria-current", "true");
+    else link.removeAttribute("aria-current");
+  });
 }
 
 function scrollToRound(bracket: HTMLElement, column: HTMLElement): void {
@@ -598,7 +625,7 @@ function renderOdds(result: OddsResult): void {
       h(
         "div",
         { class: "section-title" },
-        "Championship odds",
+        h("h2", {}, "Championship odds"),
         h("span", { class: "hint" }, `${result.runs.toLocaleString()} simulations`),
       ),
       h("div", { class: "odds-legend" }, "Bar = win probability · final/SF = reached that round"),
