@@ -135,7 +135,7 @@ function pct(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function setStatus(message: string, kind: "info" | "error" = "info"): void {
+function setStatus(message: string | Node, kind: "info" | "error" = "info"): void {
   els.status.innerHTML = "";
   els.status.append(message instanceof Node ? message : document.createTextNode(message));
   els.status.dataset.kind = kind;
