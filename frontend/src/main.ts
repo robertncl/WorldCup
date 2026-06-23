@@ -1,22 +1,43 @@
 import {
-  getTeams,
-  simulate,
-  odds,
+  getState,
+  runOdds,
   type Team,
-  type Standing,
-  type Match,
-  type GroupResult,
-  type KnockoutRound,
-  type TournamentResult,
+  type Fixture,
+  type GameState,
+  type Prediction,
   type OddsResult,
 } from "./api";
 
 // ---------- State ----------
 
 const teamMap = new Map<string, Team>();
-let groupLetters: string[] = [];
+let state: GameState = { teams: [], groups: [], fixtures: [], asOf: "" };
+let openFixtures: Fixture[] = [];
 
-// ---------- Tiny DOM helpers ----------
+// Player picks, persisted in the browser. Only open (not-yet-played) fixtures
+// can be predicted; played fixtures are the imported baseline and stay locked.
+const PRED_KEY = "wc2026.predictions.v2";
+const CHAMP_KEY = "wc2026.champion.v2";
+let predictions: Record<string, Prediction> = loadPredictions();
+let championPick = localStorage.getItem(CHAMP_KEY) ?? "";
+
+// Odds are computed on demand; flag them stale when predictions change.
+let lastOdds: OddsResult | null = null;
+let oddsStale = false;
+
+function loadPredictions(): Record<string, Prediction> {
+  try {
+    const raw = localStorage.getItem(PRED_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, Prediction>) : {};
+  } catch {
+    return {};
+  }
+}
+function savePredictions(): void {
+  localStorage.setItem(PRED_KEY, JSON.stringify(predictions));
+}
+
+// ---------- DOM helpers ----------
 
 type Attrs = Record<string, string | number | boolean | undefined>;
 
@@ -36,97 +57,24 @@ function h(tag: string, attrs: Attrs = {}, ...children: (Node | string)[]): HTML
 const $ = <T extends HTMLElement>(selector: string): T =>
   document.querySelector(selector) as T;
 
-// ---------- Celebration / motion ----------
-
-const prefersReducedMotion = (): boolean =>
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-// Timers for the staged knockout reveal — cleared whenever we re-render so a
-// fresh simulation never overlaps with a reveal still playing from the last one.
-let revealTimers: number[] = [];
-function clearRevealTimers(): void {
-  for (const id of revealTimers) clearTimeout(id);
-  revealTimers = [];
-}
-const later = (fn: () => void, ms: number): void => {
-  revealTimers.push(window.setTimeout(fn, ms));
-};
-
-const CONFETTI_COLORS = ["#2ee6a6", "#ffce4d", "#ff5d8f", "#5aa7ff", "#41d8c4", "#ffffff"];
-
-let confettiLayer: HTMLElement | null = null;
-function celebrationLayer(): HTMLElement {
-  if (!confettiLayer) {
-    confettiLayer = h("div", { class: "confetti-layer", "aria-hidden": "true" });
-    document.body.append(confettiLayer);
-  }
-  return confettiLayer;
-}
-
-// Fire a burst of confetti pieces from a viewport-relative origin (0–1 on each
-// axis). Each piece is a short-lived DOM node that removes itself when done.
-function confettiBurst(count: number, originX: number, originY: number): void {
-  if (prefersReducedMotion()) return;
-  const layer = celebrationLayer();
-  const ox = originX * window.innerWidth;
-  const oy = originY * window.innerHeight;
-  for (let i = 0; i < count; i++) {
-    const piece = document.createElement("span");
-    piece.className = "confetti";
-    const angle = Math.random() * Math.PI * 2;
-    const velocity = 90 + Math.random() * 240;
-    const dx = Math.cos(angle) * velocity;
-    const dy = Math.sin(angle) * velocity - (130 + Math.random() * 150);
-    const size = 6 + Math.random() * 7;
-    piece.style.left = `${ox}px`;
-    piece.style.top = `${oy}px`;
-    piece.style.inlineSize = `${size}px`;
-    piece.style.blockSize = `${size * (0.5 + Math.random())}px`;
-    piece.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
-    piece.style.setProperty("--dx", `${dx}px`);
-    piece.style.setProperty("--dy", `${dy}px`);
-    piece.style.setProperty("--rot", `${Math.random() * 720 - 360}deg`);
-    piece.style.setProperty("--dur", `${1200 + Math.random() * 1000}ms`);
-    if (Math.random() > 0.5) piece.style.borderRadius = "50%";
-    piece.addEventListener("animationend", () => piece.remove(), { once: true });
-    layer.append(piece);
-  }
-}
-
-// A localized burst centred over an element (e.g. a freshly revealed round).
-function burstOver(el: HTMLElement, count: number): void {
-  const rect = el.getBoundingClientRect();
-  if (rect.width === 0) return;
-  const x = (rect.left + rect.width / 2) / window.innerWidth;
-  const y = Math.max(0.08, rect.top / window.innerHeight + 0.04);
-  confettiBurst(count, x, y);
-}
-
-// Apply a staggered entrance to a set of cards by indexing a CSS custom prop.
-function stagger(nodes: HTMLElement[]): void {
-  nodes.forEach((node, i) => {
-    node.classList.add("stagger");
-    node.style.setProperty("--i", String(i));
-  });
-}
-
 const els = {
-  seed: $<HTMLInputElement>("#seed-input"),
-  simulate: $<HTMLButtonElement>("#simulate-btn"),
-  runs: $<HTMLSelectElement>("#runs-select"),
-  oddsBtn: $<HTMLButtonElement>("#odds-btn"),
+  asOf: $<HTMLElement>("#as-of"),
+  autopick: $<HTMLButtonElement>("#autopick-btn"),
+  clear: $<HTMLButtonElement>("#clear-btn"),
+  summary: $<HTMLDivElement>("#summary"),
   status: $<HTMLDivElement>("#status"),
   panels: {
-    groups: $<HTMLElement>("#panel-groups"),
-    knockout: $<HTMLElement>("#panel-knockout"),
+    predict: $<HTMLElement>("#panel-predict"),
+    tables: $<HTMLElement>("#panel-tables"),
     odds: $<HTMLElement>("#panel-odds"),
   },
 };
 
-// ---------- Formatting helpers ----------
+// ---------- Formatting ----------
 
 const nameOf = (code: string): string => teamMap.get(code)?.name ?? code;
 const flagOf = (code: string): string => teamMap.get(code)?.flag ?? "🏳️";
+const ratingOf = (code: string): number => teamMap.get(code)?.rating ?? 1700;
 
 function pct(value: number): string {
   if (value <= 0) return "0%";
@@ -134,22 +82,10 @@ function pct(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function setStatus(message: string | Node, kind: "info" | "error" = "info"): void {
-  els.status.innerHTML = "";
-  els.status.append(message instanceof Node ? message : document.createTextNode(message));
+function setStatus(message: string, kind: "info" | "error" = "info"): void {
+  els.status.textContent = message;
   els.status.dataset.kind = kind;
   els.status.classList.toggle("show", message !== "");
-}
-
-function setBusy(message: string): void {
-  // Build nodes rather than interpolating into innerHTML so the message can
-  // never be parsed as HTML.
-  els.status.replaceChildren(
-    h("span", { class: "spin", "aria-hidden": "true" }),
-    document.createTextNode(message),
-  );
-  els.status.dataset.kind = "info";
-  els.status.classList.add("show");
 }
 
 // ---------- Tabs ----------
@@ -157,9 +93,7 @@ function setBusy(message: string): void {
 function setupTabs(): void {
   const tabs = [...document.querySelectorAll<HTMLButtonElement>(".tab")];
   tabs.forEach((tab) => {
-    tab.addEventListener("click", () => activateTab(tab.dataset.tab ?? "groups"));
-    // Tab widgets must be arrow-key navigable (WAI-ARIA tabs pattern); plain
-    // buttons only give Tab-key traversal, so add roving focus + activation.
+    tab.addEventListener("click", () => activateTab(tab.dataset.tab ?? "predict"));
     tab.addEventListener("keydown", (e) => {
       const idx = tabs.indexOf(tab);
       let next = -1;
@@ -170,7 +104,7 @@ function setupTabs(): void {
       else return;
       e.preventDefault();
       const target = tabs[next];
-      activateTab(target.dataset.tab ?? "groups");
+      activateTab(target.dataset.tab ?? "predict");
       target.focus();
     });
   });
@@ -180,99 +114,279 @@ function activateTab(name: string): void {
   for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
     const selected = tab.dataset.tab === name;
     tab.setAttribute("aria-selected", String(selected));
-    tab.tabIndex = selected ? 0 : -1; // roving tabindex
+    tab.tabIndex = selected ? 0 : -1;
   }
   for (const [key, panel] of Object.entries(els.panels)) {
     panel.hidden = key !== name;
   }
+  if (name === "tables") renderTables();
 }
 
-// ---------- Team chip ----------
+// ---------- Result projection ----------
 
-function teamCell(code: string): HTMLElement {
-  return h(
-    "span",
-    {},
-    h("span", { class: "flag", "aria-hidden": "true" }, flagOf(code)),
-    h("span", { class: "name" }, nameOf(code)),
+interface Row {
+  team: string;
+  group: string;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  gf: number;
+  ga: number;
+  gd: number;
+  points: number;
+  rank: number;
+}
+
+// resultFor returns the scoreline that currently applies to a fixture: the real
+// result if played, the player's prediction if one exists, else null (open).
+function resultFor(f: Fixture): [number, number] | null {
+  if (f.played) return [f.homeGoals, f.awayGoals];
+  const p = predictions[f.id];
+  if (p && Number.isFinite(p.homeGoals) && Number.isFinite(p.awayGoals)) {
+    return [p.homeGoals, p.awayGoals];
+  }
+  return null;
+}
+
+function blankRow(team: string, group: string): Row {
+  return { team, group, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, gd: 0, points: 0, rank: 0 };
+}
+
+// betterRow ranks a above b by points, goal difference, goals for, then rating.
+function betterRow(a: Row, b: Row): number {
+  if (a.points !== b.points) return b.points - a.points;
+  if (a.gd !== b.gd) return b.gd - a.gd;
+  if (a.gf !== b.gf) return b.gf - a.gf;
+  if (ratingOf(a.team) !== ratingOf(b.team)) return ratingOf(b.team) - ratingOf(a.team);
+  return a.team.localeCompare(b.team);
+}
+
+// projectGroup builds the current table for a group from decided results.
+function projectGroup(letter: string): { rows: Row[]; total: number; decided: number } {
+  const rows = new Map<string, Row>();
+  for (const t of state.teams) {
+    if (t.group === letter) rows.set(t.code, blankRow(t.code, letter));
+  }
+  let total = 0;
+  let decided = 0;
+  for (const f of state.fixtures) {
+    if (f.group !== letter) continue;
+    total++;
+    const r = resultFor(f);
+    if (!r) continue;
+    decided++;
+    const [hg, ag] = r;
+    const home = rows.get(f.home);
+    const away = rows.get(f.away);
+    if (!home || !away) continue;
+    home.played++; away.played++;
+    home.gf += hg; home.ga += ag; away.gf += ag; away.ga += hg;
+    home.gd = home.gf - home.ga; away.gd = away.gf - away.ga;
+    if (hg > ag) { home.won++; home.points += 3; away.lost++; }
+    else if (ag > hg) { away.won++; away.points += 3; home.lost++; }
+    else { home.drawn++; away.drawn++; home.points++; away.points++; }
+  }
+  const sorted = [...rows.values()].sort(betterRow);
+  sorted.forEach((r, i) => (r.rank = i + 1));
+  return { rows: sorted, total, decided };
+}
+
+// thirdPlaceRanking gathers each group's third-placed team and ranks them; the
+// best eight qualify. Returns the set of qualifying team codes.
+function thirdPlaceRanking(groupTables: Map<string, Row[]>): { ordered: Row[]; qualified: Set<string> } {
+  const thirds: Row[] = [];
+  for (const rows of groupTables.values()) {
+    if (rows[2]) thirds.push(rows[2]);
+  }
+  thirds.sort(betterRow);
+  const qualified = new Set(thirds.slice(0, 8).map((r) => r.team));
+  return { ordered: thirds, qualified };
+}
+
+// ---------- Predict tab ----------
+
+function renderPredict(): void {
+  const grid = h("div", { class: "group-grid" });
+  for (const letter of state.groups) {
+    grid.append(predictCard(letter));
+  }
+
+  els.panels.predict.replaceChildren(
+    h(
+      "div",
+      { class: "section-title" },
+      h("h2", {}, "Predict the matches"),
+      h("span", { class: "hint" }, "Locked scores are real results · type your score in the open matches"),
+    ),
+    scoringCard(),
+    grid,
   );
 }
 
-// ---------- Groups ----------
+function predictCard(letter: string): HTMLElement {
+  const fixtures = state.fixtures.filter((f) => f.group === letter);
+  const playedCount = fixtures.filter((f) => f.played).length;
+  const card = h(
+    "div",
+    { class: "group-card predict-card" },
+    h(
+      "h3",
+      {},
+      `Group ${letter}`,
+      h("span", { class: "played-tag" }, `${playedCount}/6 played`),
+    ),
+  );
+  const list = h("div", { class: "fixture-list" });
+  for (const f of fixtures) list.append(fixtureRow(f));
+  card.append(list);
+  return card;
+}
 
-function renderGroupPreview(teams: Team[]): void {
-  const grid = h("div", { class: "group-grid" });
-  const cards: HTMLElement[] = [];
-  for (const letter of groupLetters) {
-    const members = teams
-      .filter((t) => t.group === letter)
-      .sort((a, b) => b.rating - a.rating);
-    const card = h("div", { class: "group-card" }, h("h3", {}, `Group ${letter}`));
-    const table = h("table", { class: "standings" });
-    table.append(
+function fixtureRow(f: Fixture): HTMLElement {
+  if (f.played) {
+    const homeWin = f.homeGoals > f.awayGoals;
+    const awayWin = f.awayGoals > f.homeGoals;
+    return h(
+      "div",
+      { class: "pmatch locked" },
+      h("div", { class: `side home${homeWin ? " win" : ""}` }, teamLabel(f.home, "home")),
       h(
-        "tr",
-        {},
-        h("th", { class: "team-col" }, "Team"),
-        h("th", {}, "Elo"),
+        "div",
+        { class: "pscore" },
+        h("div", { class: "pscore-main" }, String(f.homeGoals), h("span", { class: "dash" }, "–"), String(f.awayGoals)),
+        h("div", { class: "pmeta" }, "FT"),
       ),
+      h("div", { class: `side away${awayWin ? " win" : ""}` }, teamLabel(f.away, "away")),
     );
-    for (const t of members) {
-      table.append(
-        h(
-          "tr",
-          {},
-          h("td", { class: "team-col" }, teamCell(t.code), t.host ? h("span", { class: "q-badge" }, "HOST") : ""),
-          h("td", {}, String(Math.round(t.rating))),
-        ),
-      );
-    }
-    card.append(table);
-    cards.push(card);
-    grid.append(card);
   }
-  stagger(cards);
 
-  els.panels.groups.replaceChildren(
+  const pred = predictions[f.id];
+  const homeInput = goalInput(f.id, "home", pred?.homeGoals);
+  const awayInput = goalInput(f.id, "away", pred?.awayGoals);
+  return h(
+    "div",
+    { class: "pmatch open", "data-id": f.id },
+    h("div", { class: "side home" }, teamLabel(f.home, "home")),
     h(
       "div",
-      { class: "section-title" },
-      h("h2", {}, "Group draw"),
-      h("span", { class: "hint" }, "12 groups of 4 · press Simulate to play the matches"),
+      { class: "pscore" },
+      h("div", { class: "pscore-main" }, homeInput, h("span", { class: "dash" }, "–"), awayInput),
+      h("div", { class: "pmeta" }, shortDate(f.date)),
     ),
-    grid,
+    h("div", { class: "side away" }, teamLabel(f.away, "away")),
   );
 }
 
-function renderGroups(result: TournamentResult): void {
-  const qualifiedThirds = new Set(
-    result.thirdPlaceTable.filter((s) => s.qualified).map((s) => s.team),
+function teamLabel(code: string, side: "home" | "away"): HTMLElement {
+  const flag = h("span", { class: "flag", "aria-hidden": "true" }, flagOf(code));
+  const name = h("span", { class: "name" }, nameOf(code));
+  return side === "home" ? h("span", { class: "tl" }, name, flag) : h("span", { class: "tl" }, flag, name);
+}
+
+function goalInput(id: string, side: "home" | "away", value?: number): HTMLInputElement {
+  const input = h("input", {
+    class: "goal",
+    type: "number",
+    min: "0",
+    max: "30",
+    inputmode: "numeric",
+    "data-id": id,
+    "data-side": side,
+    "aria-label": `${side} goals`,
+    placeholder: "–",
+  }) as HTMLInputElement;
+  if (value != null && Number.isFinite(value)) input.value = String(value);
+  input.addEventListener("input", onGoalInput);
+  return input;
+}
+
+function onGoalInput(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  const id = input.dataset.id!;
+  const card = input.closest(".pmatch") as HTMLElement;
+  const inputs = card.querySelectorAll<HTMLInputElement>("input.goal");
+  const home = clampGoals(inputs[0].value);
+  const away = clampGoals(inputs[1].value);
+  if (home == null || away == null) {
+    delete predictions[id]; // incomplete picks don't count
+  } else {
+    predictions[id] = { homeGoals: home, awayGoals: away };
+  }
+  savePredictions();
+  oddsStale = true;
+  refreshDerived();
+}
+
+function clampGoals(raw: string): number | null {
+  if (raw.trim() === "") return null;
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.min(30, n);
+}
+
+function scoringCard(): HTMLElement {
+  return h(
+    "details",
+    { class: "scoring" },
+    h("summary", {}, "How the prediction game works"),
+    h(
+      "div",
+      { class: "scoring-body" },
+      h(
+        "p",
+        {},
+        "The group results played so far are imported as the baseline and locked. " +
+          "Predict the scoreline of every remaining match to project the final tables, " +
+          "see who qualifies, and run your title odds.",
+      ),
+      h(
+        "ul",
+        {},
+        h("li", {}, h("b", {}, "3 pts"), " — exact scoreline"),
+        h("li", {}, h("b", {}, "1 pt"), " — correct result (win / draw / loss)"),
+        h("li", {}, h("b", {}, "0 pts"), " — anything else"),
+      ),
+      h("p", { class: "scoring-note" }, "Your picks are scored against real results as new matches are played."),
+    ),
   );
+}
+
+// ---------- Group tables tab ----------
+
+function renderTables(): void {
+  const groupTables = new Map<string, Row[]>();
+  for (const letter of state.groups) groupTables.set(letter, projectGroup(letter).rows);
+  const { ordered, qualified } = thirdPlaceRanking(groupTables);
 
   const grid = h("div", { class: "group-grid" });
-  const cards: HTMLElement[] = [];
-  for (const group of result.groups) {
-    const card = groupCard(group, qualifiedThirds);
-    cards.push(card);
-    grid.append(card);
+  for (const letter of state.groups) {
+    grid.append(tableCard(letter, projectGroup(letter), qualified));
   }
-  stagger(cards);
 
-  els.panels.groups.replaceChildren(
+  els.panels.tables.replaceChildren(
     h(
       "div",
       { class: "section-title" },
-      h("h2", {}, "Group stage"),
-      h("span", { class: "hint" }, "Top 2 advance · best 8 third-placed teams also qualify"),
+      h("h2", {}, "Projected group tables"),
+      h("span", { class: "hint" }, "Real results + your picks · top 2 advance, best 8 third-placed teams join them"),
     ),
     grid,
-    thirdPlaceTable(result.thirdPlaceTable),
+    thirdPlaceCard(ordered, qualified),
   );
 }
 
-function groupCard(group: GroupResult, qualifiedThirds: Set<string>): HTMLElement {
-  const card = h("div", { class: "group-card" }, h("h3", {}, `Group ${group.group}`));
-
+function tableCard(letter: string, proj: { rows: Row[]; total: number; decided: number }, qualifiedThirds: Set<string>): HTMLElement {
+  const card = h(
+    "div",
+    { class: "group-card" },
+    h(
+      "h3",
+      {},
+      `Group ${letter}`,
+      h("span", { class: "played-tag" }, proj.decided < proj.total ? `${proj.decided}/${proj.total} decided` : "complete"),
+    ),
+  );
   const table = h("table", { class: "standings" });
   table.append(
     h(
@@ -288,435 +402,281 @@ function groupCard(group: GroupResult, qualifiedThirds: Set<string>): HTMLElemen
       h("th", {}, "Pts"),
     ),
   );
-
-  for (const s of group.standings) {
-    const isThirdQualified = s.rank === 3 && qualifiedThirds.has(s.team);
-    const rowClass =
-      s.rank <= 2 ? "qualify" : s.rank === 3 ? (isThirdQualified ? "third q" : "third") : "out";
-    const teamTd = h("td", { class: "team-col" }, teamCell(s.team));
-    if (isThirdQualified) teamTd.append(h("span", { class: "q-badge" }, "✓"));
-
+  for (const r of proj.rows) {
+    const isThirdQ = r.rank === 3 && qualifiedThirds.has(r.team);
+    const rowClass = r.rank <= 2 ? "qualify" : r.rank === 3 ? (isThirdQ ? "third q" : "third") : "out";
+    const teamTd = h(
+      "td",
+      { class: "team-col" },
+      h("span", { class: "flag", "aria-hidden": "true" }, flagOf(r.team)),
+      nameOf(r.team),
+    );
+    if (isThirdQ) teamTd.append(h("span", { class: "q-badge" }, "✓"));
     table.append(
       h(
         "tr",
         { class: rowClass },
-        h("td", { class: "row-pos" }, String(s.rank)),
+        h("td", { class: "row-pos" }, String(r.rank)),
         teamTd,
-        h("td", {}, String(s.played)),
-        h("td", {}, String(s.won)),
-        h("td", {}, String(s.drawn)),
-        h("td", {}, String(s.lost)),
-        h("td", {}, s.gd > 0 ? `+${s.gd}` : String(s.gd)),
-        h("td", { class: "pts" }, String(s.points)),
+        h("td", {}, String(r.played)),
+        h("td", {}, String(r.won)),
+        h("td", {}, String(r.drawn)),
+        h("td", {}, String(r.lost)),
+        h("td", {}, r.gd > 0 ? `+${r.gd}` : String(r.gd)),
+        h("td", { class: "pts" }, String(r.points)),
       ),
     );
   }
   card.append(table);
-  card.append(fixturesDetails(group.matches));
   return card;
 }
 
-function fixturesDetails(matches: Match[]): HTMLElement {
-  const details = h("details", { class: "fixtures" }, h("summary", {}, "Fixtures"));
-  for (const m of matches) {
-    details.append(
-      h(
-        "div",
-        { class: "fixture" },
-        h("span", {}, `${flagOf(m.home)} ${nameOf(m.home)}`),
-        h("span", { class: "score" }, `${m.homeGoals}–${m.awayGoals}`),
-        h("span", {}, `${nameOf(m.away)} ${flagOf(m.away)}`),
-      ),
-    );
-  }
-  return details;
-}
-
-function thirdPlaceTable(table: Standing[]): HTMLElement {
+function thirdPlaceCard(ordered: Row[], qualified: Set<string>): HTMLElement {
   const list = h("div", { class: "third-list" });
-  table.forEach((s, i) => {
+  ordered.forEach((r, i) => {
     list.append(
       h(
         "div",
-        { class: s.qualified ? "third-item q" : "third-item" },
+        { class: qualified.has(r.team) ? "third-item q" : "third-item" },
         h("span", { class: "pos" }, String(i + 1)),
-        h("span", { class: "flag", "aria-hidden": "true" }, flagOf(s.team)),
-        h("span", {}, `${nameOf(s.team)} (${s.group})`),
-        h("span", { class: "pts" }, `${s.points} pts · ${s.gd > 0 ? "+" : ""}${s.gd}`),
+        h("span", { class: "flag", "aria-hidden": "true" }, flagOf(r.team)),
+        h("span", {}, `${nameOf(r.team)} (${r.group})`),
+        h("span", { class: "pts" }, `${r.points} pts · ${r.gd > 0 ? "+" : ""}${r.gd}`),
       ),
     );
   });
   return h(
     "div",
     { class: "third-table" },
-    h("h3", {}, "Third-placed ranking — best 8 advance"),
+    h("h3", {}, "Third-placed race — best 8 advance (provisional until all groups decided)"),
     list,
   );
 }
 
-// ---------- Knockout ----------
+// ---------- Title odds tab ----------
 
-const BRACKET_ROUNDS = ["Round of 32", "Round of 16", "Quarter-finals", "Semi-finals", "Final"];
-
-const ROUND_SHORT: Record<string, string> = {
-  "Round of 32": "R32",
-  "Round of 16": "R16",
-  "Quarter-finals": "QF",
-  "Semi-finals": "SF",
-  Final: "Final",
-};
-
-// Tracks which round is most visible so its jump-link can be highlighted.
-// Disconnected on each re-render so stale observers don't pile up.
-let roundObserver: IntersectionObserver | null = null;
-
-function renderKnockout(result: TournamentResult): void {
-  clearRevealTimers();
-  roundObserver?.disconnect();
-  const byName = new Map(result.knockout.map((r) => [r.name, r]));
-
-  // The podium reveals last so the champion stays a surprise until the bracket
-  // has played through every round.
-  const podium = h(
-    "div",
-    { class: "podium reveal-pending" },
-    medalCard("gold", "🥇 Champions", result.champion),
-    medalCard("silver", "🥈 Runners-up", result.runnerUp),
-    medalCard("bronze", "🥉 Third place", result.third),
+function renderOddsControls(): HTMLElement {
+  const runs = h(
+    "select",
+    { id: "runs-select" },
+    h("option", { value: "2000" }, "2,000"),
+    h("option", { value: "10000", selected: true }, "10,000"),
+    h("option", { value: "25000" }, "25,000"),
+    h("option", { value: "50000" }, "50,000"),
   );
+  const useMine = h("input", { type: "checkbox", id: "use-mine", checked: true }) as HTMLInputElement;
+  const runBtn = h("button", { class: "btn btn-primary", type: "button" }, "▶ Run odds");
+  runBtn.addEventListener("click", () => runOddsNow());
 
-  const bracket = h("div", {
-    class: "bracket",
-    role: "group",
-    "aria-label": "Knockout bracket — scroll horizontally to see every round",
-    tabindex: "0",
-  });
-  const columns: HTMLElement[] = [];
-  const roundNames: string[] = [];
-  for (const roundName of BRACKET_ROUNDS) {
-    const round = byName.get(roundName);
-    if (!round) continue;
-    const column = roundColumn(round, result.champion);
-    column.classList.add("reveal-pending");
-    columns.push(column);
-    roundNames.push(roundName);
-    bracket.append(column);
+  return h(
+    "div",
+    { class: "odds-controls" },
+    h("label", { class: "runs-field" }, h("span", {}, "Simulations"), runs),
+    h("label", { class: "use-mine-field" }, useMine, h("span", {}, "Include my predictions")),
+    runBtn,
+  );
+}
+
+async function runOddsNow(): Promise<void> {
+  const runsSel = $<HTMLSelectElement>("#runs-select");
+  const useMine = $<HTMLInputElement>("#use-mine");
+  const runs = Number(runsSel?.value ?? 10000);
+  const preds = useMine?.checked ? predictions : {};
+  setStatus("Running Monte Carlo simulations…");
+  try {
+    lastOdds = await runOdds(preds, runs);
+    oddsStale = false;
+    renderOdds();
+    const top = lastOdds.odds[0];
+    setStatus(top ? `Favourite: ${flagOf(top.team)} ${nameOf(top.team)} at ${pct(top.champion)} over ${lastOdds.runs.toLocaleString()} runs.` : "Done.");
+  } catch (err) {
+    console.error(err);
+    setStatus("Odds run failed — is the server running?", "error");
   }
+}
 
-  const roundNav = buildRoundNav(roundNames, columns, bracket);
-
+function renderOdds(): void {
   const children: (Node | string)[] = [
     h(
       "div",
       { class: "section-title" },
-      h("h2", {}, "Knockout bracket"),
-      h("span", { class: "hint" }, "32 teams · single elimination · jump to any round →"),
+      h("h2", {}, "Title odds"),
+      h("span", { class: "hint" }, "Monte Carlo conditioned on real results so far + your predictions"),
     ),
-    roundNav,
-    podium,
-    bracket,
+    renderOddsControls(),
   ];
 
-  const thirdPlace = byName.get("Third-place play-off");
-  if (thirdPlace) {
+  if (!lastOdds) {
     children.push(
       h(
         "div",
-        { class: "round third-place-card" },
-        h("div", { class: "round-title" }, "Third-place play-off"),
-        matchCard(thirdPlace.matches[0], false),
+        { class: "placeholder" },
+        h("div", { class: "big" }, "📊"),
+        h("p", {}, "Run the simulations to see each team's chance to advance and lift the trophy in your scenario."),
       ),
     );
-  }
-
-  els.panels.knockout.replaceChildren(...children);
-  playKnockoutReveal(columns, podium, result.champion);
-}
-
-// Reveal the bracket one round at a time — each newly shown round is a set of
-// teams that just advanced, so we pop a small confetti burst over it. When the
-// final round lands, the podium drops in with a full championship celebration.
-function playKnockoutReveal(
-  columns: HTMLElement[],
-  podium: HTMLElement,
-  champion: string,
-): void {
-  if (prefersReducedMotion()) {
-    for (const column of columns) column.classList.remove("reveal-pending");
-    podium.classList.remove("reveal-pending");
+    els.panels.odds.replaceChildren(...children);
     return;
   }
 
-  const step = 1700;
-  columns.forEach((column, idx) => {
-    later(() => {
-      column.classList.remove("reveal-pending");
-      column.classList.add("revealed");
-      if (idx > 0) burstOver(column, 18); // teams advancing into this round
-    }, idx * step);
-  });
-
-  later(() => {
-    podium.classList.remove("reveal-pending");
-    podium.classList.add("celebrate");
-    setStatus(
-      `🏆 ${flagOf(champion)} ${nameOf(champion)} are World Cup champions!`,
-    );
-    confettiBurst(140, 0.5, 0.3);
-    later(() => confettiBurst(80, 0.22, 0.4), 220);
-    later(() => confettiBurst(80, 0.78, 0.4), 440);
-  }, columns.length * step + 150);
-}
-
-// A row of pill links — one per round — that scroll the bracket to that round
-// and flash it. An IntersectionObserver keeps the link for the round currently
-// in view highlighted as the user scrolls.
-function buildRoundNav(
-  roundNames: string[],
-  columns: HTMLElement[],
-  bracket: HTMLElement,
-): HTMLElement {
-  const nav = h("nav", { class: "round-nav", "aria-label": "Jump to round" });
-  const links = roundNames.map((name, idx) => {
-    const link = h(
-      "button",
-      { type: "button", class: "round-link" },
-      ROUND_SHORT[name] ?? name,
-    );
-    link.addEventListener("click", () => {
-      setActiveRoundLink(links, idx);
-      scrollToRound(bracket, columns[idx]);
-    });
-    nav.append(link);
-    return link;
-  });
-
-  // Highlight whichever round is most visible inside the scroller.
-  const ratios = new Map<Element, number>();
-  roundObserver = new IntersectionObserver(
-    (entries) => {
-      for (const e of entries) ratios.set(e.target, e.isIntersecting ? e.intersectionRatio : 0);
-      let bestIdx = 0;
-      let best = -1;
-      columns.forEach((col, i) => {
-        const r = ratios.get(col) ?? 0;
-        if (r > best) {
-          best = r;
-          bestIdx = i;
-        }
-      });
-      setActiveRoundLink(links, bestIdx);
-    },
-    { root: bracket, threshold: [0.25, 0.5, 0.75, 1] },
-  );
-  for (const col of columns) roundObserver.observe(col);
-
-  return nav;
-}
-
-function setActiveRoundLink(links: HTMLElement[], idx: number): void {
-  links.forEach((link, i) => {
-    const active = i === idx;
-    link.classList.toggle("active", active);
-    if (active) link.setAttribute("aria-current", "true");
-    else link.removeAttribute("aria-current");
-  });
-}
-
-function scrollToRound(bracket: HTMLElement, column: HTMLElement): void {
-  const delta = column.getBoundingClientRect().left - bracket.getBoundingClientRect().left;
-  bracket.scrollTo({
-    left: Math.max(0, bracket.scrollLeft + delta - 16),
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
-  });
-  // Flash the target so it's obvious which round was jumped to, even when the
-  // bracket already fits on screen and no scrolling happens.
-  column.classList.remove("flash");
-  void column.offsetWidth; // force reflow to restart the animation
-  column.classList.add("flash");
-  column.addEventListener("animationend", () => column.classList.remove("flash"), { once: true });
-}
-
-function medalCard(kind: string, label: string, code: string): HTMLElement {
-  return h(
-    "div",
-    { class: `medal ${kind}` },
-    h("span", { class: "medal-flag", "aria-hidden": "true" }, flagOf(code)),
-    h(
-      "div",
-      {},
-      h("div", { class: "medal-label" }, label),
-      h("div", { class: "medal-name" }, nameOf(code)),
-    ),
-  );
-}
-
-function roundColumn(round: KnockoutRound, champion: string): HTMLElement {
-  const isFinal = round.name === "Final";
-  const column = h("div", { class: "round" }, h("div", { class: "round-title" }, round.name));
-  for (const match of round.matches) {
-    column.append(matchCard(match, isFinal, isFinal ? champion : undefined));
+  if (oddsStale) {
+    children.push(h("div", { class: "stale-note" }, "Your predictions changed — run again to refresh the odds."));
   }
-  return column;
-}
 
-function matchCard(match: Match, isFinal: boolean, champion?: string): HTMLElement {
-  const card = h("div", { class: isFinal ? "match final-match" : "match" });
-  card.append(matchRow(match, match.home, match.homeGoals, match.homePens, champion));
-  card.append(matchRow(match, match.away, match.awayGoals, match.awayPens, champion));
-  return card;
-}
-
-function matchRow(
-  match: Match,
-  code: string,
-  goals: number,
-  pens: number | undefined,
-  champion?: string,
-): HTMLElement {
-  const isWinner = match.winner === code;
-  const row = h(
-    "div",
-    { class: isWinner ? "match-row winner" : "match-row" },
-    h("span", { class: "flag", "aria-hidden": "true" }, flagOf(code)),
-    h("span", { class: "name" }, champion === code ? `${nameOf(code)} 🏆` : nameOf(code)),
-  );
-  const score = h("span", { class: "score" }, String(goals));
-  if (match.shootout && pens != null) {
-    score.append(h("span", { class: "pens" }, `(${pens})`));
+  if (championPick) {
+    const mine = lastOdds.odds.find((o) => o.team === championPick);
+    if (mine) {
+      children.push(
+        h(
+          "div",
+          { class: "champ-callout" },
+          h("span", { class: "flag", "aria-hidden": "true" }, flagOf(championPick)),
+          h("div", {}, h("div", { class: "champ-callout-label" }, "Your champion pick"),
+            h("div", { class: "champ-callout-name" }, `${nameOf(championPick)} — ${pct(mine.champion)} to win`)),
+        ),
+      );
+    }
   }
-  row.append(score);
-  return row;
-}
 
-// ---------- Odds ----------
-
-function renderOdds(result: OddsResult): void {
-  const max = result.odds[0]?.champion || 1;
-
+  const max = lastOdds.odds[0]?.champion || 1;
   const list = h("div", { class: "odds-list" });
-  const rows: HTMLElement[] = [];
-  result.odds.forEach((o, i) => {
+  lastOdds.odds.forEach((o, i) => {
     const width = o.champion > 0 ? Math.max(2, (o.champion / max) * 100) : 0;
     const row = h(
-        "div",
-        { class: "odds-row" },
-        h("span", { class: "rank" }, String(i + 1)),
-        h(
-          "span",
-          { class: "who" },
-          h("span", { class: "flag", "aria-hidden": "true" }, flagOf(o.team)),
-          h(
-            "span",
-            {},
-            nameOf(o.team),
-            " ",
-            h("span", { class: "sub" }, `· final ${pct(o.final)} · SF ${pct(o.semiFinal)}`),
-          ),
-        ),
-        h("span", { class: "bar-wrap" }, h("span", { class: "bar", style: `--w:${width}%` })),
-        h("span", { class: "pct" }, pct(o.champion)),
-      );
-    rows.push(row);
+      "div",
+      { class: o.team === championPick ? "odds-row mine" : "odds-row" },
+      h("span", { class: "rank" }, String(i + 1)),
+      h(
+        "span",
+        { class: "who" },
+        h("span", { class: "flag", "aria-hidden": "true" }, flagOf(o.team)),
+        h("span", {}, nameOf(o.team), " ", h("span", { class: "sub" }, `· adv ${pct(o.advance)} · final ${pct(o.final)}`)),
+      ),
+      h("span", { class: "bar-wrap" }, h("span", { class: "bar", style: `--w:${width}%` })),
+      h("span", { class: "pct" }, pct(o.champion)),
+    );
     list.append(row);
   });
-  stagger(rows);
+  children.push(list);
+  els.panels.odds.replaceChildren(...children);
+}
 
-  els.panels.odds.replaceChildren(
+// ---------- Summary / champion picker ----------
+
+function renderSummary(): void {
+  const predicted = openFixtures.filter((f) => predictions[f.id]).length;
+  const total = openFixtures.length;
+  const ratio = total ? predicted / total : 0;
+
+  const champSelect = h("select", { id: "champion-select", "aria-label": "Pick your champion" }) as HTMLSelectElement;
+  champSelect.append(h("option", { value: "" }, "— pick a champion —"));
+  for (const letter of state.groups) {
+    const og = h("optgroup", { label: `Group ${letter}` });
+    for (const t of state.teams.filter((x) => x.group === letter)) {
+      const opt = h("option", { value: t.code }, `${t.flag} ${t.name}`) as HTMLOptionElement;
+      if (t.code === championPick) opt.selected = true;
+      og.append(opt);
+    }
+    champSelect.append(og);
+  }
+  champSelect.addEventListener("change", () => {
+    championPick = champSelect.value;
+    localStorage.setItem(CHAMP_KEY, championPick);
+    if (lastOdds) renderOdds();
+  });
+
+  els.summary.replaceChildren(
     h(
       "div",
-      { class: "odds-head" },
+      { class: "summary-inner" },
       h(
         "div",
-        { class: "section-title" },
-        h("h2", {}, "Championship odds"),
-        h("span", { class: "hint" }, `${result.runs.toLocaleString()} simulations`),
+        { class: "stat-chip" },
+        h("span", { class: "stat-num" }, `${predicted}`),
+        h("span", { class: "stat-label" }, `/ ${total} matches predicted`),
+        h("span", { class: "mini-bar" }, h("span", { class: "mini-fill", style: `--w:${ratio * 100}%` })),
       ),
-      h("div", { class: "odds-legend" }, "Bar = win probability · final/SF = reached that round"),
+      h("label", { class: "champ-chip" }, h("span", { class: "champ-label" }, "🏆 Your champion"), champSelect),
     ),
-    list,
   );
+}
+
+// refreshDerived updates everything that depends on the current predictions
+// without disturbing the prediction inputs the player is typing into.
+function refreshDerived(): void {
+  renderSummary();
+  if (!els.panels.tables.hidden) renderTables();
+  if (lastOdds && oddsStale && !els.panels.odds.hidden) renderOdds();
 }
 
 // ---------- Actions ----------
 
-async function runSimulation(): Promise<void> {
-  const raw = els.seed.value.trim();
-  const seed = raw === "" ? undefined : Number(raw);
-
-  els.simulate.disabled = true;
-  setBusy("Simulating the tournament…");
-  try {
-    const result = await simulate(seed);
-    els.seed.value = String(result.seed);
-    renderGroups(result);
-    activateTab("knockout");
-    renderKnockout(result);
-    if (prefersReducedMotion()) {
-      setStatus(
-        `${flagOf(result.champion)} ${nameOf(result.champion)} win the World Cup! ` +
-          `(seed ${result.seed} — edit the seed box and Simulate again to reproduce)`,
-      );
-    } else {
-      setStatus("Playing through the knockout rounds…");
-    }
-  } catch (err) {
-    console.error(err);
-    setStatus("Simulation failed — is the server running?", "error");
-  } finally {
-    els.simulate.disabled = false;
-  }
+// autoScore returns a plausible scoreline from the two ratings (the same
+// expected-goals model the server uses), rounded to whole goals.
+function autoScore(home: string, away: string): [number, number] {
+  const diff = ratingOf(home) - ratingOf(away);
+  const clamp = (l: number) => Math.min(5.5, Math.max(0.18, l));
+  const la = clamp(1.32 * Math.exp(0.003 * diff));
+  const lb = clamp(1.32 * Math.exp(-0.003 * diff));
+  return [Math.round(la), Math.round(lb)];
 }
 
-async function runOdds(): Promise<void> {
-  const runs = Number(els.runs.value);
-  els.oddsBtn.disabled = true;
-  setBusy(`Running ${runs.toLocaleString()} simulations…`);
-  try {
-    const result = await odds(runs);
-    renderOdds(result);
-    activateTab("odds");
-    const top = result.odds[0];
-    setStatus(
-      top
-        ? `Favourite: ${flagOf(top.team)} ${nameOf(top.team)} at ${pct(top.champion)} over ${result.runs.toLocaleString()} runs.`
-        : "Done.",
-    );
-  } catch (err) {
-    console.error(err);
-    setStatus("Odds run failed — is the server running?", "error");
-  } finally {
-    els.oddsBtn.disabled = false;
+function autopickAll(): void {
+  for (const f of openFixtures) {
+    const [hg, ag] = autoScore(f.home, f.away);
+    predictions[f.id] = { homeGoals: hg, awayGoals: ag };
   }
+  savePredictions();
+  oddsStale = true;
+  renderPredict();
+  refreshDerived();
+  setStatus("Filled every open match from the team ratings — tweak any you disagree with.");
+}
+
+function clearPicks(): void {
+  predictions = {};
+  savePredictions();
+  oddsStale = true;
+  renderPredict();
+  refreshDerived();
+  setStatus("Cleared your predictions.");
+}
+
+// ---------- Misc ----------
+
+function shortDate(iso: string): string {
+  const d = new Date(iso + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 // ---------- Boot ----------
 
-function placeholder(panel: HTMLElement, emoji: string, text: string): void {
-  panel.replaceChildren(
-    h("div", { class: "placeholder" }, h("div", { class: "big" }, emoji), h("p", {}, text)),
-  );
-}
-
 async function init(): Promise<void> {
   setupTabs();
-  els.simulate.addEventListener("click", runSimulation);
-  els.oddsBtn.addEventListener("click", runOdds);
-
-  placeholder(els.panels.knockout, "🏆", "Run a simulation to see the bracket.");
-  placeholder(els.panels.odds, "📊", "Run the Monte Carlo simulations to see championship odds.");
+  els.autopick.addEventListener("click", autopickAll);
+  els.clear.addEventListener("click", clearPicks);
 
   try {
-    const data = await getTeams();
-    groupLetters = data.groups;
-    for (const team of data.teams) teamMap.set(team.code, team);
-    renderGroupPreview(data.teams);
-    // Kick off one tournament so the page opens on a full result.
-    await runSimulation();
+    state = await getState();
+    for (const t of state.teams) teamMap.set(t.code, t);
+    openFixtures = state.fixtures.filter((f) => !f.played);
+
+    // Drop any saved picks that refer to fixtures no longer open (e.g. a match
+    // that has since been played and imported into the baseline).
+    const openIds = new Set(openFixtures.map((f) => f.id));
+    for (const id of Object.keys(predictions)) if (!openIds.has(id)) delete predictions[id];
+    savePredictions();
+
+    els.asOf.textContent = state.asOf ? `· results imported ${shortDate(state.asOf)}` : "";
+
+    renderPredict();
+    renderSummary();
+    renderOdds();
+    setStatus(`${openFixtures.length} matches still to play — predict them, then check your title odds.`);
   } catch (err) {
     console.error(err);
-    placeholder(els.panels.groups, "⚠️", "Couldn't reach the API. Is the Go server running?");
-    setStatus("Couldn't load teams from the API.", "error");
+    setStatus("Couldn't load the tournament from the API. Is the Go server running?", "error");
   }
 }
 

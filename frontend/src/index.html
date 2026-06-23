@@ -7,9 +7,9 @@
     <meta name="theme-color" content="#232b40" />
     <meta
       name="description"
-      content="Simulate the 48-team FIFA World Cup 2026 — group stage, knockout bracket, and Monte Carlo championship odds."
+      content="World Cup 2026 prediction game — real results imported as the baseline, predict the rest, project the tables and your title odds."
     />
-    <title>World Cup 2026 Simulator</title>
+    <title>World Cup 2026 — Prediction Game</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -18,47 +18,42 @@
       <div class="brand">
         <span class="brand-ball" aria-hidden="true">⚽</span>
         <div class="brand-text">
-          <h1>World Cup <span class="accent">2026</span></h1>
-          <p class="subtitle">Canada · México · USA — 48-team tournament simulator</p>
+          <h1>World Cup <span class="accent">2026</span> · Predictor</h1>
+          <p class="subtitle">
+            Canada · México · USA — predict every match
+            <span id="as-of" class="as-of"></span>
+          </p>
         </div>
       </div>
 
       <div class="controls">
-        <label class="seed-field">
-          <span>Seed</span>
-          <input id="seed-input" type="number" inputmode="numeric" placeholder="random" />
-        </label>
-        <button id="simulate-btn" class="btn btn-primary" type="button">🎲 Simulate</button>
-        <label class="runs-field">
-          <span>Runs</span>
-          <select id="runs-select">
-            <option value="1000">1,000</option>
-            <option value="5000">5,000</option>
-            <option value="10000" selected>10,000</option>
-            <option value="25000">25,000</option>
-            <option value="50000">50,000</option>
-          </select>
-        </label>
-        <button id="odds-btn" class="btn" type="button">📊 Run odds</button>
+        <button id="autopick-btn" class="btn" type="button">✨ Auto-pick</button>
+        <button id="clear-btn" class="btn" type="button">↺ Clear picks</button>
       </div>
     </header>
+
+    <div id="summary" class="summary" aria-label="Your prediction summary"></div>
 
     <div id="status" class="status" role="status" aria-live="polite"></div>
 
     <nav class="tab-bar" role="tablist" aria-label="Views">
-      <button class="tab" role="tab" id="tab-groups" data-tab="groups" aria-controls="panel-groups" aria-selected="true" tabindex="0">Groups</button>
-      <button class="tab" role="tab" id="tab-knockout" data-tab="knockout" aria-controls="panel-knockout" aria-selected="false" tabindex="-1">Knockout</button>
-      <button class="tab" role="tab" id="tab-odds" data-tab="odds" aria-controls="panel-odds" aria-selected="false" tabindex="-1">Odds</button>
+      <button class="tab" role="tab" id="tab-predict" data-tab="predict" aria-controls="panel-predict" aria-selected="true" tabindex="0">Predict</button>
+      <button class="tab" role="tab" id="tab-tables" data-tab="tables" aria-controls="panel-tables" aria-selected="false" tabindex="-1">Group tables</button>
+      <button class="tab" role="tab" id="tab-odds" data-tab="odds" aria-controls="panel-odds" aria-selected="false" tabindex="-1">Title odds</button>
     </nav>
 
     <main>
-      <section id="panel-groups" class="panel" role="tabpanel" aria-labelledby="tab-groups" tabindex="0"></section>
-      <section id="panel-knockout" class="panel" role="tabpanel" aria-labelledby="tab-knockout" tabindex="0" hidden></section>
+      <section id="panel-predict" class="panel" role="tabpanel" aria-labelledby="tab-predict" tabindex="0"></section>
+      <section id="panel-tables" class="panel" role="tabpanel" aria-labelledby="tab-tables" tabindex="0" hidden></section>
       <section id="panel-odds" class="panel" role="tabpanel" aria-labelledby="tab-odds" tabindex="0" hidden></section>
     </main>
 
     <footer class="app-footer">
-      <p>Team ratings are approximate and for entertainment only. Built with Go &amp; Bun.</p>
+      <p>
+        Real group-stage results imported as the baseline; locked matches show
+        the final score. Predictions are saved in your browser. Ratings are
+        approximate and for entertainment only. Built with Go &amp; Bun.
+      </p>
     </footer>
 
     <script type="module" src="./main.ts"></script>

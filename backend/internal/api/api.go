@@ -1,5 +1,5 @@
-// Package api exposes the simulator over HTTP: a small JSON API under /api and
-// static hosting of the built frontend for everything else.
+// Package api exposes the prediction game over HTTP: a small JSON API under
+// /api and static hosting of the built frontend for everything else.
 package api
 
 import (
@@ -17,13 +17,14 @@ import (
 )
 
 // randomSeed returns a fresh seed small enough to round-trip safely through a
-// JavaScript number, so a shared seed always reproduces the same tournament.
+// JavaScript number, so a shared seed always reproduces the same simulation.
 func randomSeed() int64 { return rand.Int63n(1 << 31) }
 
 const (
 	defaultOddsRuns = 10000
 	maxOddsRuns     = 50000
 	minOddsRuns     = 100
+	maxPredictGoals = 30 // sanity cap on a submitted prediction scoreline
 )
 
 // Server wires the API handlers and static file hosting together.
@@ -40,8 +41,7 @@ func New(staticDir string) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.handleHealth)
-	mux.HandleFunc("/api/teams", s.handleTeams)
-	mux.HandleFunc("/api/simulate", s.handleSimulate)
+	mux.HandleFunc("/api/state", s.handleState)
 	mux.HandleFunc("/api/odds", s.handleOdds)
 	mux.HandleFunc("/", s.handleStatic)
 	return withSecurityHeaders(withCORS(mux))
@@ -51,35 +51,72 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// handleTeams returns the 48 participants and the group letters.
-func (s *Server) handleTeams(w http.ResponseWriter, _ *http.Request) {
+// handleState returns everything the client needs to render the game: the 48
+// teams, the group letters, the full fixture list (with baseline results) and
+// the date that baseline was imported.
+func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"teams":  data.Teams(),
-		"groups": data.GroupLetters(),
+		"teams":    data.Teams(),
+		"groups":   data.GroupLetters(),
+		"fixtures": data.Fixtures(),
+		"asOf":     data.DataAsOf,
 	})
 }
 
-// handleSimulate runs a single tournament. An optional `seed` query parameter
-// makes the result reproducible; otherwise a time-based seed is used.
-func (s *Server) handleSimulate(w http.ResponseWriter, r *http.Request) {
-	seed := randomSeed()
-	if v := r.URL.Query().Get("seed"); v != "" {
-		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
-			seed = parsed
-		}
-	}
-	writeJSON(w, http.StatusOK, sim.Simulate(data.Teams(), seed))
+// oddsRequest is the optional POST body for /api/odds: the player's predicted
+// scorelines for open fixtures, keyed by fixture id.
+type oddsRequest struct {
+	Runs        int                       `json:"runs"`
+	Seed        *int64                    `json:"seed"`
+	Predictions map[string]predictedScore `json:"predictions"`
 }
 
-// handleOdds runs many tournaments and returns aggregate probabilities. The
-// `runs` query parameter (clamped to a safe range) controls how many.
+type predictedScore struct {
+	HomeGoals int `json:"homeGoals"`
+	AwayGoals int `json:"awayGoals"`
+}
+
+// handleOdds runs the Monte Carlo engine conditioned on the real results so far
+// plus any predictions in the request body, and returns advancement and title
+// probabilities. GET (no body) conditions on the real results only.
 func (s *Server) handleOdds(w http.ResponseWriter, r *http.Request) {
 	runs := defaultOddsRuns
-	if v := r.URL.Query().Get("runs"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil {
-			runs = parsed
+	seed := randomSeed()
+	decided := map[string]sim.Score{}
+
+	if r.Method == http.MethodPost {
+		var req oddsRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil && err.Error() != "EOF" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+		if req.Runs > 0 {
+			runs = req.Runs
+		}
+		if req.Seed != nil {
+			seed = *req.Seed
+		}
+		valid := validFixtureIDs()
+		for id, p := range req.Predictions {
+			if !valid[id] || p.HomeGoals < 0 || p.AwayGoals < 0 ||
+				p.HomeGoals > maxPredictGoals || p.AwayGoals > maxPredictGoals {
+				continue
+			}
+			decided[id] = sim.Score{Home: p.HomeGoals, Away: p.AwayGoals}
+		}
+	} else {
+		if v := r.URL.Query().Get("runs"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil {
+				runs = parsed
+			}
+		}
+		if v := r.URL.Query().Get("seed"); v != "" {
+			if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+				seed = parsed
+			}
 		}
 	}
+
 	if runs < minOddsRuns {
 		runs = minOddsRuns
 	}
@@ -87,13 +124,19 @@ func (s *Server) handleOdds(w http.ResponseWriter, r *http.Request) {
 		runs = maxOddsRuns
 	}
 
-	seed := randomSeed()
-	if v := r.URL.Query().Get("seed"); v != "" {
-		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
-			seed = parsed
+	writeJSON(w, http.StatusOK, sim.Odds(data.Teams(), data.Fixtures(), decided, runs, seed))
+}
+
+// validFixtureIDs returns the set of open fixtures that may be predicted.
+// Already-played fixtures are baseline truth and cannot be overridden.
+func validFixtureIDs() map[string]bool {
+	ids := map[string]bool{}
+	for _, f := range data.Fixtures() {
+		if !f.Played {
+			ids[f.ID] = true
 		}
 	}
-	writeJSON(w, http.StatusOK, sim.Odds(data.Teams(), runs, seed))
+	return ids
 }
 
 // handleStatic serves the built frontend, falling back to index.html so the
@@ -130,17 +173,17 @@ func writeBuildHint(w http.ResponseWriter, staticDir string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8">` +
-		`<title>World Cup 2026 Simulator</title>` +
+		`<title>World Cup 2026 Prediction Game</title>` +
 		`<style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1.5rem;line-height:1.6;color:#e8eef5;background:#0b1220}` +
 		`code{background:#1b2738;padding:.15em .4em;border-radius:.3em}a{color:#5ad08a}</style></head><body>` +
-		`<h1>⚽ World Cup 2026 Simulator</h1>` +
+		`<h1>⚽ World Cup 2026 Prediction Game</h1>` +
 		`<p>The API is running, but the frontend has not been built yet.</p>` +
 		`<p>From the <code>frontend</code> directory run:</p>` +
 		`<pre><code>bun install   # first time only
 bun run build</code></pre>` +
 		`<p>Expected static directory: <code>` + html.EscapeString(staticDir) + `</code></p>` +
-		`<p>The JSON API is available now at <a href="/api/teams">/api/teams</a>, ` +
-		`<a href="/api/simulate">/api/simulate</a>, and <a href="/api/odds?runs=2000">/api/odds</a>.</p>` +
+		`<p>The JSON API is available now at <a href="/api/state">/api/state</a> ` +
+		`and <a href="/api/odds?runs=2000">/api/odds</a>.</p>` +
 		`</body></html>`))
 }
 
@@ -154,8 +197,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // withSecurityHeaders applies conservative hardening headers to every response.
-// (A Content-Security-Policy is intentionally omitted because the SPA relies on
-// inline styles and an inline module; add one once those are externalised.)
 func withSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -168,7 +209,7 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

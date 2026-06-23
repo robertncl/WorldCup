@@ -973,6 +973,368 @@ details.fixtures summary {
   }
 }
 
+/* ====================================================================
+   Prediction game
+   ==================================================================== */
+
+.as-of {
+  color: var(--faint);
+  margin-inline-start: 0.35rem;
+}
+
+/* ---------- Summary strip ---------- */
+
+.summary {
+  max-inline-size: 1200px;
+  margin: 0.4rem auto 0;
+  padding: 0 clamp(1rem, 4vw, 2.5rem);
+}
+
+.summary-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem 1rem;
+}
+
+.stat-chip,
+.champ-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.85rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-out-sm);
+}
+
+.stat-num {
+  font-size: 1.15rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.mini-bar {
+  inline-size: 5rem;
+  block-size: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  overflow: hidden;
+  box-shadow: var(--shadow-in-sm);
+}
+
+.mini-fill {
+  display: block;
+  block-size: 100%;
+  inline-size: var(--w, 0%);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: inline-size 0.35s ease;
+}
+
+.champ-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.champ-chip select,
+.odds-controls select {
+  font-family: inherit;
+  font-size: 0.92rem;
+  color: var(--text);
+  background: var(--bg);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  box-shadow: var(--shadow-in-sm);
+  max-inline-size: 12rem;
+}
+
+.champ-chip select:focus-visible,
+.odds-controls select:focus-visible,
+input.goal:focus-visible,
+.use-mine-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- Scoring rules ---------- */
+
+.scoring {
+  margin-block-end: 1.3rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 0.5rem 1.1rem;
+  box-shadow: var(--shadow-out-sm);
+}
+
+.scoring summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0.4rem 0;
+}
+
+.scoring summary:hover {
+  color: var(--text);
+}
+
+.scoring-body {
+  font-size: 0.88rem;
+  color: var(--muted);
+  padding-block-end: 0.6rem;
+}
+
+.scoring-body ul {
+  margin: 0.4rem 0;
+  padding-inline-start: 1.1rem;
+}
+
+.scoring-body b {
+  color: var(--accent);
+}
+
+.scoring-note {
+  color: var(--faint);
+  font-size: 0.82rem;
+}
+
+/* ---------- Predict cards ---------- */
+
+.predict-card {
+  container-type: inline-size;
+}
+
+.played-tag {
+  float: inline-end;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--faint);
+  background: var(--bg);
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-in-sm);
+}
+
+.fixture-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-block-start: 0.3rem;
+}
+
+/* A match row: home (right-aligned) | score | away (left-aligned). */
+.pmatch {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+  padding: 0.4rem 0.3rem;
+  border-radius: var(--radius-sm);
+  border-block-start: 1px solid var(--divider);
+}
+
+.pmatch:first-child {
+  border-block-start: none;
+}
+
+.side {
+  display: flex;
+  align-items: center;
+  min-inline-size: 0;
+}
+
+.side.home {
+  justify-content: end;
+}
+
+.side .tl {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-inline-size: 0;
+}
+
+.side .name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.side.home {
+  text-align: end;
+}
+
+.pmatch.locked .side.win .name {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.pmatch.locked .side.win .flag {
+  filter: drop-shadow(0 0 6px rgba(46, 230, 166, 0.45));
+}
+
+.pscore {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.pscore-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pmatch.locked .pscore-main {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.pscore .dash {
+  color: var(--faint);
+}
+
+.pmeta {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--faint);
+}
+
+.pmatch.locked .pmeta {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* Goal inputs: pressed wells, no spinner, 16px to dodge iOS zoom. */
+input.goal {
+  inline-size: 2.5rem;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--text);
+  background: var(--bg);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.2rem;
+  box-shadow: var(--shadow-in-sm);
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+input.goal::-webkit-outer-spin-button,
+input.goal::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input.goal::placeholder {
+  color: var(--faint);
+  font-weight: 400;
+}
+
+/* In a tight card, give the names a touch less room rather than overflow. */
+@container (max-width: 320px) {
+  .side .name {
+    font-size: 0.78rem;
+  }
+  .pmatch {
+    gap: 0.3rem 0.35rem;
+  }
+}
+
+/* ---------- Odds controls + callout ---------- */
+
+.odds-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem 1rem;
+  margin-block-end: 1.2rem;
+}
+
+.runs-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+
+.use-mine-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.use-mine-field input {
+  inline-size: 1.05rem;
+  block-size: 1.05rem;
+}
+
+.stale-note {
+  margin-block-end: 1rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: var(--radius-sm);
+  background: var(--third);
+  color: var(--accent-2);
+  font-size: 0.85rem;
+  box-shadow: var(--shadow-in-sm);
+}
+
+.champ-callout {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-block-end: 1.2rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(120% 120% at 100% 0%, rgba(255, 206, 77, 0.18), transparent 55%),
+    var(--surface);
+  box-shadow: var(--shadow-out), 0 12px 28px -12px rgba(255, 206, 77, 0.35);
+}
+
+.champ-callout .flag {
+  font-size: 2.2rem;
+}
+
+.champ-callout-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+
+.champ-callout-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.odds-row.mine {
+  box-shadow: var(--shadow-out-sm), inset 3px 0 0 var(--accent-2);
+}
+
 /* Soft UI leans entirely on box-shadow for edges and depth — and box-shadow is
    dropped in Forced Colors Mode. Restore real borders with system colours so
    every surface and control keeps a visible boundary and selected state. */

@@ -1,5 +1,5 @@
-// Command worldcup serves the World Cup 2026 simulator: a JSON API backed by
-// the simulation engine plus the static single-page frontend.
+// Command worldcup serves the World Cup 2026 prediction game: a JSON API backed
+// by the simulation engine plus the static single-page frontend.
 package main
 
 import (
@@ -40,7 +40,7 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	log.Printf("⚽ World Cup 2026 simulator listening on http://localhost%s", *addr)
+	log.Printf("⚽ World Cup 2026 prediction game listening on http://localhost%s", *addr)
 	log.Printf("   serving frontend from %s", staticDir)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)

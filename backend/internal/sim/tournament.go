@@ -7,6 +7,13 @@ import (
 	"worldcup/internal/data"
 )
 
+// Score is a fixed scoreline for a group fixture, keyed by fixture ID in the
+// `decided` map passed to the engine (e.g. a player's prediction).
+type Score struct {
+	Home int
+	Away int
+}
+
 // Match is a single fixture result. For knockout fixtures Winner is always set;
 // Shootout/HomePens/AwayPens describe a penalty shootout when one occurred.
 type Match struct {
@@ -45,7 +52,6 @@ type Standing struct {
 type GroupResult struct {
 	Group     string     `json:"group"`
 	Standings []Standing `json:"standings"`
-	Matches   []Match    `json:"matches"`
 }
 
 // KnockoutRound is one round of the bracket.
@@ -64,6 +70,7 @@ type TournamentResult struct {
 	RunnerUp        string          `json:"runnerUp"`
 	Third           string          `json:"third"`
 
+	qualifiers    []string // the 32 teams that reached the knockout (not serialized)
 	semifinalists []string // teams that reached the semi-finals (not serialized)
 }
 
@@ -91,23 +98,28 @@ var knockoutRoundNames = []string{
 	"Semi-finals",
 }
 
-// Simulate runs one full tournament with the given random seed and returns the
-// complete result.
-func Simulate(teams []data.Team, seed int64) *TournamentResult {
+// Simulate runs one full tournament with the given random seed. Group fixtures
+// that are already played (in `fixtures`) or supplied in `decided` use their
+// fixed scoreline; every other group match and all knockout ties are sampled.
+func Simulate(teams []data.Team, fixtures []data.Fixture, decided map[string]Score, seed int64) *TournamentResult {
 	rng := rand.New(rand.NewSource(seed))
-	res := simulate(teams, rng)
+	res := simulate(teams, fixtures, decided, rng)
 	res.Seed = seed
 	return res
 }
 
 // simulate runs one tournament using the supplied RNG. Reused by Odds so many
 // tournaments can share a single random stream.
-func simulate(teams []data.Team, rng *rand.Rand) *TournamentResult {
+func simulate(teams []data.Team, fixtures []data.Fixture, decided map[string]Score, rng *rand.Rand) *TournamentResult {
 	ratings := make(map[string]float64, len(teams))
 	byGroup := map[string][]data.Team{}
 	for _, t := range teams {
 		ratings[t.Code] = t.Rating
 		byGroup[t.Group] = append(byGroup[t.Group], t)
+	}
+	fixturesByGroup := map[string][]data.Fixture{}
+	for _, f := range fixtures {
+		fixturesByGroup[f.Group] = append(fixturesByGroup[f.Group], f)
 	}
 
 	// --- Group stage ---
@@ -117,7 +129,7 @@ func simulate(teams []data.Team, rng *rand.Rand) *TournamentResult {
 	runnersUp := make([]Standing, 0, len(letters))
 	thirds := make([]Standing, 0, len(letters))
 	for _, g := range letters {
-		gr := playGroup(rng, g, byGroup[g])
+		gr := playGroup(rng, g, byGroup[g], fixturesByGroup[g], decided, ratings)
 		groups = append(groups, gr)
 		winners = append(winners, gr.Standings[0])
 		runnersUp = append(runnersUp, gr.Standings[1])
@@ -155,6 +167,11 @@ func simulate(teams []data.Team, rng *rand.Rand) *TournamentResult {
 		}
 		return betterStanding(seeds[i], seeds[j])
 	})
+
+	qualifiers := make([]string, 0, 32)
+	for _, s := range seeds {
+		qualifiers = append(qualifiers, s.Team)
+	}
 
 	// Place the seeds into bracket slots.
 	slots := make([]teamRef, 32)
@@ -216,30 +233,25 @@ func simulate(teams []data.Team, rng *rand.Rand) *TournamentResult {
 		Champion:        champion,
 		RunnerUp:        runnerUp,
 		Third:           thirdPlace.Winner,
+		qualifiers:      qualifiers,
 		semifinalists:   semifinalists,
 	}
 }
 
-// playGroup simulates a four-team group as a single round-robin and returns the
-// sorted standings plus the six fixtures.
-func playGroup(rng *rand.Rand, letter string, ts []data.Team) GroupResult {
+// playGroup builds a four-team group table from its six fixtures. Played and
+// player-decided fixtures use their fixed scoreline; the rest are sampled.
+func playGroup(rng *rand.Rand, letter string, ts []data.Team, fixtures []data.Fixture, decided map[string]Score, ratings map[string]float64) GroupResult {
 	st := make(map[string]*Standing, len(ts))
 	for _, t := range ts {
 		st[t.Code] = &Standing{Team: t.Code, Group: letter, rating: t.Rating, tie: rng.Float64()}
 	}
 
-	// All six pairings among four teams.
-	pairs := [6][2]int{{0, 1}, {2, 3}, {0, 2}, {1, 3}, {0, 3}, {1, 2}}
-	matches := make([]Match, 0, len(pairs))
-	for _, p := range pairs {
-		a, b := ts[p[0]], ts[p[1]]
-		ga, gb := playMatch(rng, a.Rating, b.Rating)
-		matches = append(matches, Match{
-			Home: a.Code, Away: b.Code,
-			HomeGoals: ga, AwayGoals: gb,
-			Played: true, Stage: "group",
-		})
-		applyResult(st[a.Code], st[b.Code], ga, gb)
+	for _, f := range fixtures {
+		hg, ag := resultFor(rng, f, decided, ratings)
+		if st[f.Home] == nil || st[f.Away] == nil {
+			continue // defensive: fixture references a team outside the group
+		}
+		applyResult(st[f.Home], st[f.Away], hg, ag)
 	}
 
 	standings := make([]Standing, 0, len(ts))
@@ -250,7 +262,19 @@ func playGroup(rng *rand.Rand, letter string, ts []data.Team) GroupResult {
 	for i := range standings {
 		standings[i].Rank = i + 1
 	}
-	return GroupResult{Group: letter, Standings: standings, Matches: matches}
+	return GroupResult{Group: letter, Standings: standings}
+}
+
+// resultFor returns the scoreline to use for a fixture: the real result if it
+// has been played, a fixed prediction if one was supplied, else a sample.
+func resultFor(rng *rand.Rand, f data.Fixture, decided map[string]Score, ratings map[string]float64) (int, int) {
+	if f.Played {
+		return f.HomeGoals, f.AwayGoals
+	}
+	if s, ok := decided[f.ID]; ok {
+		return s.Home, s.Away
+	}
+	return playMatch(rng, ratings[f.Home], ratings[f.Away])
 }
 
 // applyResult updates two standings with the outcome of a match between them.

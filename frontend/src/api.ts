@@ -1,4 +1,4 @@
-// Typed client for the Go simulator API. Served from the same origin in
+// Typed client for the Go prediction-game API. Served from the same origin in
 // production; `API_BASE` can point elsewhere during development.
 
 export interface Team {
@@ -11,53 +11,22 @@ export interface Team {
   host: boolean;
 }
 
-export interface Standing {
-  team: string;
+export interface Fixture {
+  id: string;
   group: string;
-  played: number;
-  won: number;
-  drawn: number;
-  lost: number;
-  gf: number;
-  ga: number;
-  gd: number;
-  points: number;
-  rank: number;
-  qualified?: boolean;
-}
-
-export interface Match {
   home: string;
   away: string;
+  date: string;
+  played: boolean;
   homeGoals: number;
   awayGoals: number;
-  played: boolean;
-  stage: string;
-  winner?: string;
-  shootout?: boolean;
-  homePens?: number;
-  awayPens?: number;
 }
 
-export interface GroupResult {
-  group: string;
-  standings: Standing[];
-  matches: Match[];
-}
-
-export interface KnockoutRound {
-  name: string;
-  matches: Match[];
-}
-
-export interface TournamentResult {
-  seed: number;
-  groups: GroupResult[];
-  thirdPlaceTable: Standing[];
-  knockout: KnockoutRound[];
-  champion: string;
-  runnerUp: string;
-  third: string;
+export interface GameState {
+  teams: Team[];
+  groups: string[];
+  fixtures: Fixture[];
+  asOf: string;
 }
 
 export interface TeamOdds {
@@ -65,11 +34,18 @@ export interface TeamOdds {
   champion: number;
   final: number;
   semiFinal: number;
+  advance: number;
 }
 
 export interface OddsResult {
   runs: number;
   odds: TeamOdds[];
+}
+
+// A predicted scoreline for an open fixture, keyed by fixture id when sent.
+export interface Prediction {
+  homeGoals: number;
+  awayGoals: number;
 }
 
 // Empty string keeps requests on the current origin (the Go server hosts both
@@ -78,21 +54,25 @@ const API_BASE = "";
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
-  if (!res.ok) {
-    throw new Error(`${path} failed: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
   return res.json() as Promise<T>;
 }
 
-export function getTeams(): Promise<{ teams: Team[]; groups: string[] }> {
-  return getJSON("/api/teams");
+export function getState(): Promise<GameState> {
+  return getJSON("/api/state");
 }
 
-export function simulate(seed?: number): Promise<TournamentResult> {
-  const query = seed != null && Number.isFinite(seed) ? `?seed=${seed}` : "";
-  return getJSON(`/api/simulate${query}`);
-}
-
-export function odds(runs: number): Promise<OddsResult> {
-  return getJSON(`/api/odds?runs=${runs}`);
+// runOdds asks the Monte Carlo engine for probabilities conditioned on the real
+// results so far plus the supplied predictions for open fixtures.
+export async function runOdds(
+  predictions: Record<string, Prediction>,
+  runs: number,
+): Promise<OddsResult> {
+  const res = await fetch(`${API_BASE}/api/odds`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ runs, predictions }),
+  });
+  if (!res.ok) throw new Error(`/api/odds failed: ${res.status}`);
+  return res.json() as Promise<OddsResult>;
 }

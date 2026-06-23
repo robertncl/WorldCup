@@ -7,12 +7,14 @@ import (
 	"worldcup/internal/data"
 )
 
-// TeamOdds holds Monte Carlo probabilities for a single team.
+// TeamOdds holds Monte Carlo probabilities for a single team, conditioned on
+// the results that are already decided (real results plus any predictions).
 type TeamOdds struct {
 	Team      string  `json:"team"`      // team code
 	Champion  float64 `json:"champion"`  // P(wins the tournament)
 	Final     float64 `json:"final"`     // P(reaches the final)
 	SemiFinal float64 `json:"semiFinal"` // P(reaches the semi-finals)
+	Advance   float64 `json:"advance"`   // P(reaches the knockout stage)
 }
 
 // OddsResult is the aggregated outcome of repeated simulations.
@@ -21,22 +23,26 @@ type OddsResult struct {
 	Odds []TeamOdds `json:"odds"` // sorted by championship probability, descending
 }
 
-// Odds runs the tournament `runs` times from the given seed and returns each
-// team's probability of reaching the semi-finals, the final, and lifting the
-// trophy. All runs share one random stream so the samples are independent.
-func Odds(teams []data.Team, runs int, seed int64) *OddsResult {
+// Odds runs the tournament `runs` times from the given seed, holding the
+// decided results fixed, and returns each team's probability of advancing to
+// the knockout, reaching the semi-finals and final, and lifting the trophy.
+func Odds(teams []data.Team, fixtures []data.Fixture, decided map[string]Score, runs int, seed int64) *OddsResult {
 	rng := rand.New(rand.NewSource(seed))
 	champ := map[string]int{}
 	final := map[string]int{}
 	semi := map[string]int{}
+	advance := map[string]int{}
 
 	for i := 0; i < runs; i++ {
-		r := simulate(teams, rng)
+		r := simulate(teams, fixtures, decided, rng)
 		champ[r.Champion]++
 		final[r.Champion]++
 		final[r.RunnerUp]++
 		for _, c := range r.semifinalists {
 			semi[c]++
+		}
+		for _, c := range r.qualifiers {
+			advance[c]++
 		}
 	}
 
@@ -48,6 +54,7 @@ func Odds(teams []data.Team, runs int, seed int64) *OddsResult {
 			Champion:  float64(champ[t.Code]) / n,
 			Final:     float64(final[t.Code]) / n,
 			SemiFinal: float64(semi[t.Code]) / n,
+			Advance:   float64(advance[t.Code]) / n,
 		})
 	}
 	sort.SliceStable(odds, func(i, j int) bool {
@@ -57,7 +64,10 @@ func Odds(teams []data.Team, runs int, seed int64) *OddsResult {
 		if odds[i].Final != odds[j].Final {
 			return odds[i].Final > odds[j].Final
 		}
-		return odds[i].SemiFinal > odds[j].SemiFinal
+		if odds[i].SemiFinal != odds[j].SemiFinal {
+			return odds[i].SemiFinal > odds[j].SemiFinal
+		}
+		return odds[i].Advance > odds[j].Advance
 	})
 
 	return &OddsResult{Runs: runs, Odds: odds}

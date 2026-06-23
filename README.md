@@ -1,31 +1,49 @@
-# ⚽ World Cup 2026 Simulator
+# ⚽ World Cup 2026 Prediction Game
 
-A web app that simulates the **48-team FIFA World Cup 2026** — group stage,
-knockout bracket, and Monte Carlo championship odds — with a **Go** backend and
-a **Bun + TypeScript** frontend.
+A web app that turns the **48-team FIFA World Cup 2026** into a prediction game.
+The real group-stage results so far are **imported as the baseline** and locked;
+you predict every remaining match, watch the group tables project in real time,
+and run Monte Carlo **title odds** conditioned on the actual results plus your
+own picks. **Go** backend, **Bun + TypeScript** frontend.
 
-- **Group stage** — 12 groups of 4, full round-robin, with the top two plus the
-  eight best third-placed teams advancing.
-- **Knockout bracket** — Round of 32 → Round of 16 → Quarter-finals →
-  Semi-finals → Final, with extra time and penalty shootouts.
-- **Monte Carlo odds** — run thousands of tournaments and see each nation's
-  probability of reaching the semis, the final, and lifting the trophy.
-- **Reproducible** — every simulation has a seed you can re-enter to replay the
-  exact same tournament.
+- **Real baseline** — the actual groups and results through the import date are
+  loaded as ground truth. Played matches are locked; only open matches are
+  predictable. (Edit `backend/internal/data/fixtures.go` to import newer
+  results.)
+- **Predict the rest** — type a scoreline for every open match. Picks are saved
+  in your browser, and an auto-pick button fills them from the team ratings.
+- **Projected tables** — the group standings update live from the real results
+  plus your predictions, highlighting who advances (top two of each group plus
+  the eight best third-placed teams).
+- **Conditional title odds** — run thousands of tournaments with the decided
+  results held fixed to see each nation's chance to reach the knockout, the
+  final, and lift the trophy in *your* scenario.
+
+## Scoring
+
+When newer results are imported, each prediction is scored against the actual
+match outcome:
+
+| Points | Outcome                                |
+| ------ | -------------------------------------- |
+| **3**  | exact scoreline                        |
+| **1**  | correct result (win / draw / loss)     |
+| **0**  | anything else                          |
 
 ## Architecture
 
 ```
 backend/    Go HTTP server + simulation engine (no external dependencies)
   main.go             entrypoint, flags, static hosting
-  internal/data/      the 48 teams, ratings, and group draw
-  internal/sim/       match model, group/knockout logic, Monte Carlo odds
+  internal/data/      the 48 teams in their real groups (teams.go) and the
+                      real fixtures + baseline results (fixtures.go)
+  internal/sim/       match model, group/knockout logic, conditional odds
   internal/api/       JSON API + single-page app hosting
 frontend/   Bun-bundled TypeScript single-page app
   src/index.html      page shell (Bun HTML entrypoint)
-  src/main.ts         rendering + interaction
+  src/main.ts         prediction UI, projected tables, localStorage picks
   src/api.ts          typed API client
-  src/styles.css      theme
+  src/styles.css      dark neumorphism theme
 run.sh      build the frontend and start the server
 ```
 
@@ -62,31 +80,38 @@ go run .           # serves API + frontend on :8080
 
 ## API
 
-| Endpoint                  | Description                                                        |
-| ------------------------- | ------------------------------------------------------------------ |
-| `GET /api/teams`          | The 48 teams and the 12 group letters.                             |
-| `GET /api/simulate`       | Simulate one tournament. Optional `?seed=<int>` for reproducibility. |
-| `GET /api/odds?runs=N`    | Run `N` tournaments (100–50,000) and return aggregate probabilities. |
-| `GET /api/health`         | Liveness check.                                                    |
+| Endpoint            | Description                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------------- |
+| `GET /api/state`    | The 48 teams, the 12 group letters, the full fixture list (with baseline results) and the import date. |
+| `GET /api/odds?runs=N`  | Title odds conditioned on the real results only.                                         |
+| `POST /api/odds`    | Title odds conditioned on the real results **plus** the predictions in the request body.     |
+| `GET /api/health`   | Liveness check.                                                                              |
 
 ```bash
-curl "http://localhost:8080/api/simulate?seed=2026"
+curl "http://localhost:8080/api/state"
 curl "http://localhost:8080/api/odds?runs=10000"
+curl -X POST http://localhost:8080/api/odds \
+  -H 'Content-Type: application/json' \
+  -d '{"runs":10000,"predictions":{"A5":{"homeGoals":2,"awayGoals":1}}}'
 ```
 
-## How the simulation works
+## How it works
 
-- **Match model.** Each team has an Elo-like `rating`. A match's expected goals
-  for each side come from the rating gap via a Poisson model; the actual score
-  is sampled from that distribution. Knockout ties go to extra time and then a
-  penalty shootout whose per-kick conversion is nudged by team strength.
-- **Group ranking.** Points → goal difference → goals for → strength → drawing
-  of lots (a per-team random key), mirroring FIFA's tiebreakers.
-- **Qualification.** The 12 group winners and 12 runners-up advance, joined by
-  the best 8 of the 12 third-placed teams.
-- **Bracket seeding.** The 32 qualifiers are seeded (winners above runners-up
-  above third-placed teams, then by record) and placed into a standard
-  single-elimination bracket so the strongest teams can only meet late.
+- **Baseline import.** `fixtures.go` lists all 72 group matches; the ones played
+  through `DataAsOf` carry the real scoreline and are locked. Everything else is
+  open for prediction. To refresh the baseline as the tournament progresses,
+  flip an `open(...)` fixture to `played(...)` with its result.
+- **Match model.** Each team has an Elo-like `rating`. For matches that still
+  have to be simulated, expected goals come from the rating gap via a Poisson
+  model; the actual score is sampled from that distribution. Knockout ties go to
+  extra time and then a penalty shootout.
+- **Conditional odds.** Every decided result — real or predicted — is held fixed
+  while the remaining group matches and the whole knockout bracket are sampled
+  thousands of times, so the probabilities reflect the tournament as it actually
+  stands plus your scenario.
+- **Group ranking.** Points → goal difference → goals for → strength, mirroring
+  FIFA's tiebreakers. The 12 winners and 12 runners-up advance, joined by the
+  best 8 of the 12 third-placed teams.
 
 Team ratings are approximate, early-2026 estimates and are intended purely for
 entertainment.
