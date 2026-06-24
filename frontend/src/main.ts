@@ -18,8 +18,17 @@ let openFixtures: Fixture[] = [];
 // can be predicted; played fixtures are the imported baseline and stay locked.
 const PRED_KEY = "wc2026.predictions.v2";
 const CHAMP_KEY = "wc2026.champion.v2";
+const KO_KEY = "wc2026.knockout.v1";
 let predictions: Record<string, Prediction> = loadPredictions();
 let championPick = localStorage.getItem(CHAMP_KEY) ?? "";
+
+// Knockout picks: which team the player advances out of each bracket tie, keyed
+// by a stable round-match slot (e.g. "0-3" or "3p"). A pick only takes effect
+// while it still names one of that tie's two current teams, so it survives
+// group-prediction edits that leave the matchup unchanged and is ignored
+// otherwise.
+let knockoutPicks: Record<string, string> = loadKnockout();
+let lastChampionShown = ""; // champion the bracket last celebrated, to fire confetti once
 
 // Odds are computed on demand; flag them stale when predictions change.
 let lastOdds: OddsResult | null = null;
@@ -35,6 +44,18 @@ function loadPredictions(): Record<string, Prediction> {
 }
 function savePredictions(): void {
   localStorage.setItem(PRED_KEY, JSON.stringify(predictions));
+}
+
+function loadKnockout(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(KO_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+function saveKnockout(): void {
+  localStorage.setItem(KO_KEY, JSON.stringify(knockoutPicks));
 }
 
 // ---------- DOM helpers ----------
@@ -66,6 +87,7 @@ const els = {
   panels: {
     predict: $<HTMLElement>("#panel-predict"),
     tables: $<HTMLElement>("#panel-tables"),
+    knockout: $<HTMLElement>("#panel-knockout"),
     odds: $<HTMLElement>("#panel-odds"),
   },
 };
@@ -120,6 +142,7 @@ function activateTab(name: string): void {
     panel.hidden = key !== name;
   }
   if (name === "tables") renderTables();
+  if (name === "knockout") renderKnockout();
 }
 
 // ---------- Result projection ----------
@@ -453,6 +476,329 @@ function thirdPlaceCard(ordered: Row[], qualified: Set<string>): HTMLElement {
   );
 }
 
+// ---------- Knockout bracket tab ----------
+
+// Standard single-elimination seeding for 32 teams: each of the 32 bracket
+// slots maps to a seed number (1 = strongest) so top seeds only meet late.
+// Mirrors the backend's bracketOrder so the predicted bracket matches the odds
+// engine's seeding.
+const bracketOrder = [
+  1, 32, 16, 17, 8, 25, 9, 24, 4, 29, 13, 20, 5, 28, 12, 21,
+  2, 31, 15, 18, 7, 26, 10, 23, 3, 30, 14, 19, 6, 27, 11, 22,
+];
+
+const koRoundNames = ["Round of 32", "Round of 16", "Quarter-finals", "Semi-finals", "Final"];
+
+interface KoMatch {
+  key: string; // stable slot id used to store the player's winner pick
+  home?: string; // team code, or undefined while an upstream tie is unsettled
+  away?: string;
+  winner?: string;
+}
+
+interface KoBracket {
+  slots: string[]; // 32 qualifier codes in bracket-slot order
+  rounds: KoMatch[][]; // Round of 32 → … → Final
+  thirdPlace: KoMatch; // between the two beaten semi-finalists
+  champion?: string;
+  runnerUp?: string;
+  third?: string;
+}
+
+const koKey = (round: number, index: number): string => `${round}-${index}`;
+
+// seedBracket projects every group from the current results, and once all
+// twelve are fully decided returns the 32 qualifiers placed into bracket slots
+// (12 winners, 12 runners-up, the 8 best third-placed teams), seeded by tier
+// then record. Returns null while any group still has an undecided match.
+function seedBracket(): string[] | null {
+  const winners: Row[] = [];
+  const runnersUp: Row[] = [];
+  const thirds: Row[] = [];
+  for (const letter of state.groups) {
+    const proj = projectGroup(letter);
+    if (proj.decided < proj.total) return null;
+    winners.push(proj.rows[0]);
+    runnersUp.push(proj.rows[1]);
+    thirds.push(proj.rows[2]);
+  }
+  winners.sort(betterRow);
+  runnersUp.sort(betterRow);
+  const bestThirds = [...thirds].sort(betterRow).slice(0, 8);
+  // Seeds 1..32 by tier (winners, then runners-up, then thirds), each tier
+  // ranked on record, exactly as the backend orders them.
+  const seeds = [...winners, ...runnersUp, ...bestThirds];
+  return bracketOrder.map((seedNo) => seeds[seedNo - 1].team);
+}
+
+// buildBracket turns the seeded slots and the saved winner picks into the full
+// bracket. Each round's teams are the previous round's advancers; a stored pick
+// only advances a team while it still names one of that tie's two participants.
+function buildBracket(): KoBracket | null {
+  const slots = seedBracket();
+  if (!slots) return null;
+
+  const rounds: KoMatch[][] = [];
+  let teams: (string | undefined)[] = slots;
+  for (let r = 0; r < koRoundNames.length; r++) {
+    const matches: KoMatch[] = [];
+    const advancers: (string | undefined)[] = [];
+    for (let i = 0; i < teams.length / 2; i++) {
+      const home = teams[2 * i];
+      const away = teams[2 * i + 1];
+      const key = koKey(r, i);
+      const pick = knockoutPicks[key];
+      const winner = pick === home || pick === away ? pick : undefined;
+      matches.push({ key, home, away, winner });
+      advancers.push(winner);
+    }
+    rounds.push(matches);
+    teams = advancers;
+  }
+
+  const final = rounds[rounds.length - 1][0];
+  const runnerUp = loserOf(final);
+
+  // Third-place play-off between the two beaten semi-finalists.
+  const semis = rounds[rounds.length - 2];
+  const sfLosers = semis.map(loserOf);
+  const tpPick = knockoutPicks["3p"];
+  const tpWinner = tpPick === sfLosers[0] || tpPick === sfLosers[1] ? tpPick : undefined;
+  const thirdPlace: KoMatch = { key: "3p", home: sfLosers[0], away: sfLosers[1], winner: tpWinner };
+
+  return {
+    slots,
+    rounds,
+    thirdPlace,
+    champion: final.winner,
+    runnerUp,
+    third: tpWinner,
+  };
+}
+
+// loserOf returns the beaten team of a settled match, or undefined if the tie
+// is not decided yet.
+function loserOf(m: KoMatch): string | undefined {
+  if (!m.home || !m.away || !m.winner) return undefined;
+  return m.winner === m.home ? m.away : m.home;
+}
+
+function pickWinner(key: string, code: string): void {
+  if (knockoutPicks[key] === code) return;
+  knockoutPicks[key] = code;
+  saveKnockout();
+  renderKnockout();
+}
+
+function renderKnockout(): void {
+  const bracket = buildBracket();
+  if (!bracket) {
+    renderKnockoutLocked();
+    return;
+  }
+  syncChampionFromBracket(bracket.champion);
+
+  const decidedTies = countDecided(bracket);
+  const children: (Node | string)[] = [
+    h(
+      "div",
+      { class: "section-title" },
+      h("h2", {}, "Knockout bracket"),
+      h("span", { class: "hint" }, "Seeded from your final group tables · tap a team to send them through"),
+    ),
+    h(
+      "div",
+      { class: "ko-controls" },
+      h("span", { class: "ko-progress" }, `${decidedTies}/31 ties picked`),
+      koControlBtn("✨ Auto-fill", autofillBracket),
+      koControlBtn("↺ Clear bracket", clearBracket),
+    ),
+  ];
+
+  if (bracket.champion) {
+    children.push(koPodium(bracket.champion, bracket.runnerUp!, bracket.third));
+  }
+
+  const rail = h("div", { class: "bracket", tabindex: "0", "aria-label": "Knockout bracket" });
+  bracket.rounds.forEach((matches, r) => {
+    const round = h("div", { class: "round" }, h("div", { class: "round-title" }, koRoundNames[r]));
+    for (const m of matches) round.append(koMatchEl(m, r === bracket.rounds.length - 1));
+    rail.append(round);
+  });
+  children.push(rail);
+
+  children.push(
+    h(
+      "div",
+      { class: "third-place-card" },
+      h("div", { class: "round-title" }, "Third-place play-off"),
+      koMatchEl(bracket.thirdPlace, false),
+    ),
+  );
+
+  els.panels.knockout.replaceChildren(...children);
+}
+
+// countDecided counts the settled ties (31 main bracket + the play-off = 32).
+function countDecided(b: KoBracket): number {
+  let n = b.thirdPlace.winner ? 1 : 0;
+  for (const round of b.rounds) for (const m of round) if (m.winner) n++;
+  return n;
+}
+
+function koMatchEl(m: KoMatch, isFinal: boolean): HTMLElement {
+  return h(
+    "div",
+    { class: isFinal ? "match final-match" : "match" },
+    koTeamRow(m, m.home),
+    koTeamRow(m, m.away),
+  );
+}
+
+function koTeamRow(m: KoMatch, code?: string): HTMLElement {
+  if (!code) {
+    return h("div", { class: "match-row placeholder" }, h("span", { class: "name" }, "—"));
+  }
+  const isWinner = m.winner === code;
+  const cls = "match-row pick" + (isWinner ? " winner" : "");
+  const row = h(
+    "button",
+    { class: cls, type: "button", "aria-pressed": String(isWinner) },
+    h("span", { class: "flag", "aria-hidden": "true" }, flagOf(code)),
+    h("span", { class: "name" }, nameOf(code)),
+  );
+  row.addEventListener("click", () => pickWinner(m.key, code));
+  return row;
+}
+
+function koControlBtn(label: string, onClick: () => void): HTMLButtonElement {
+  const btn = h("button", { class: "btn", type: "button" }, label) as HTMLButtonElement;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+// koPodium shows the medal trio once the final is decided, celebrating a freshly
+// crowned champion with a confetti burst.
+function koPodium(champion: string, runnerUp: string, third?: string): HTMLElement {
+  const medal = (place: string, label: string, code: string) =>
+    h(
+      "div",
+      { class: `medal ${place}` },
+      h("span", { class: "medal-flag", "aria-hidden": "true" }, flagOf(code)),
+      h("div", {}, h("div", { class: "medal-label" }, label), h("div", { class: "medal-name" }, nameOf(code))),
+    );
+  const podium = h("div", { class: "podium celebrate" }, medal("gold", "🏆 Champion", champion));
+  podium.append(medal("silver", "Runner-up", runnerUp));
+  if (third) podium.append(medal("bronze", "Third place", third));
+  return podium;
+}
+
+function renderKnockoutLocked(): void {
+  const remaining = openFixtures.filter((f) => !predictions[f.id]).length;
+  els.panels.knockout.replaceChildren(
+    h(
+      "div",
+      { class: "placeholder" },
+      h("div", { class: "big" }, "🔒"),
+      h("p", {}, "Fill in every group match to unlock the knockout bracket and pick your way to the trophy."),
+      h("p", { class: "ko-remaining" }, `${remaining} group ${remaining === 1 ? "match" : "matches"} still to predict.`),
+      h(
+        "div",
+        { class: "ko-controls" },
+        koControlBtn("✨ Auto-pick remaining", autopickRemaining),
+        koControlBtn("Go to Predict", () => activateTab("predict")),
+      ),
+    ),
+  );
+}
+
+// syncChampionFromBracket makes a completed bracket the source of truth for the
+// champion pick used by the summary strip and the odds callout, firing confetti
+// the first time a new winner is crowned.
+function syncChampionFromBracket(champion?: string): void {
+  if (!champion) {
+    lastChampionShown = "";
+    return;
+  }
+  if (champion !== championPick) {
+    championPick = champion;
+    localStorage.setItem(CHAMP_KEY, championPick);
+    renderSummary();
+    if (lastOdds) renderOdds();
+  }
+  if (champion !== lastChampionShown) {
+    lastChampionShown = champion;
+    confettiBurst();
+    setStatus(`🏆 ${flagOf(champion)} ${nameOf(champion)} are your World Cup champions!`);
+  }
+}
+
+function autofillBracket(): void {
+  // Walk the rounds, settling every tie whose two teams are known in favour of
+  // the higher-rated side, so later rounds fill once their feeders are decided.
+  for (let pass = 0; pass < koRoundNames.length; pass++) {
+    const b = buildBracket();
+    if (!b) return;
+    for (const round of b.rounds) {
+      for (const m of round) {
+        if (m.home && m.away && !m.winner) {
+          knockoutPicks[m.key] = ratingOf(m.home) >= ratingOf(m.away) ? m.home : m.away;
+        }
+      }
+    }
+    const tp = b.thirdPlace;
+    if (tp.home && tp.away && !tp.winner) {
+      knockoutPicks["3p"] = ratingOf(tp.home) >= ratingOf(tp.away) ? tp.home : tp.away;
+    }
+  }
+  saveKnockout();
+  renderKnockout();
+  setStatus("Filled the bracket from the team ratings — tap any tie to change the winner.");
+}
+
+function clearBracket(): void {
+  knockoutPicks = {};
+  saveKnockout();
+  lastChampionShown = "";
+  renderKnockout();
+  setStatus("Cleared your knockout picks.");
+}
+
+function autopickRemaining(): void {
+  for (const f of openFixtures) {
+    if (predictions[f.id]) continue;
+    const [hg, ag] = autoScore(f.home, f.away);
+    predictions[f.id] = { homeGoals: hg, awayGoals: ag };
+  }
+  savePredictions();
+  oddsStale = true;
+  renderPredict();
+  refreshDerived();
+  renderKnockout();
+  setStatus("Filled the remaining group matches — the knockout bracket is unlocked.");
+}
+
+// confettiBurst sprays a quick shower of confetti from the top of the viewport.
+function confettiBurst(): void {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const layer = h("div", { class: "confetti-layer", "aria-hidden": "true" });
+  const colors = ["#2ee6a6", "#ffce4d", "#ff5d8f", "#5aa7ff"];
+  for (let i = 0; i < 80; i++) {
+    const piece = h("span", { class: "confetti" });
+    const s = piece.style;
+    s.left = `${Math.random() * 100}vw`;
+    s.top = `${-10 - Math.random() * 20}vh`;
+    s.background = colors[i % colors.length];
+    s.setProperty("--dx", `${(Math.random() - 0.5) * 60}vw`);
+    s.setProperty("--dy", `${10 + Math.random() * 20}vh`);
+    s.setProperty("--rot", `${360 + Math.random() * 720}deg`);
+    s.setProperty("--dur", `${1500 + Math.random() * 1400}ms`);
+    layer.append(piece);
+  }
+  document.body.append(layer);
+  setTimeout(() => layer.remove(), 3200);
+}
+
 // ---------- Title odds tab ----------
 
 function renderOddsControls(): HTMLElement {
@@ -606,6 +952,7 @@ function renderSummary(): void {
 function refreshDerived(): void {
   renderSummary();
   if (!els.panels.tables.hidden) renderTables();
+  if (!els.panels.knockout.hidden) renderKnockout();
   if (lastOdds && oddsStale && !els.panels.odds.hidden) renderOdds();
 }
 

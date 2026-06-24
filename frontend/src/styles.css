@@ -1335,6 +1335,70 @@ input.goal::placeholder {
   box-shadow: var(--shadow-out-sm), inset 3px 0 0 var(--accent-2);
 }
 
+/* ---------- Knockout prediction ---------- */
+
+.ko-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.75rem;
+  margin-block-end: 1.4rem;
+}
+
+.ko-progress {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-inline-end: auto;
+}
+
+.ko-remaining {
+  color: var(--faint);
+  font-size: 0.92rem;
+  margin-block: -0.2rem 0.4rem;
+}
+
+/* Bracket rows double as winner buttons; strip the native button chrome and
+   lean on the existing .match-row look, lighting the chosen side green. */
+button.match-row {
+  inline-size: 100%;
+  font: inherit;
+  text-align: start;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+button.match-row:hover {
+  background: rgba(46, 230, 166, 0.07);
+}
+
+button.match-row:hover .name {
+  color: var(--text);
+}
+
+button.match-row.winner:hover {
+  background: rgba(46, 230, 166, 0.16);
+}
+
+button.match-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.match-row.placeholder {
+  color: var(--faint);
+  font-style: italic;
+}
+
+@media (forced-colors: active) {
+  button.match-row.winner {
+    border: 1px solid Highlight;
+  }
+}
+
 /* Soft UI leans entirely on box-shadow for edges and depth — and box-shadow is
    dropped in Forced Colors Mode. Restore real borders with system colours so
    every surface and control keeps a visible boundary and selected state. */
