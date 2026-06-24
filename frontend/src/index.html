@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#232b40" />
+    <meta name="theme-color" content="#10132a" />
     <meta
       name="description"
       content="World Cup 2026 prediction game — real results imported as the baseline, predict the rest, project the tables and your title odds."
@@ -32,20 +32,40 @@
       </div>
     </header>
 
-    <div id="summary" class="summary" aria-label="Your prediction summary"></div>
+    <div id="summary" class="summary" aria-label="Your prediction progress"></div>
 
     <div id="status" class="status" role="status" aria-live="polite"></div>
 
-    <nav class="tab-bar" role="tablist" aria-label="Views">
-      <button class="tab" role="tab" id="tab-predict" data-tab="predict" aria-controls="panel-predict" aria-selected="true" tabindex="0">Predict</button>
-      <button class="tab" role="tab" id="tab-tables" data-tab="tables" aria-controls="panel-tables" aria-selected="false" tabindex="-1">Group tables</button>
-      <button class="tab" role="tab" id="tab-knockout" data-tab="knockout" aria-controls="panel-knockout" aria-selected="false" tabindex="-1">Knockout</button>
-      <button class="tab" role="tab" id="tab-odds" data-tab="odds" aria-controls="panel-odds" aria-selected="false" tabindex="-1">Title odds</button>
+    <!-- Guided three-step flow. Kept as an ARIA tablist for assistive tech, but
+         presented as a connected stepper: Groups → Knockout → Odds. -->
+    <nav class="stepper" role="tablist" aria-label="Stages">
+      <button class="step" role="tab" id="tab-groups" data-tab="groups" aria-controls="panel-groups" aria-selected="true" tabindex="0">
+        <span class="step-num" aria-hidden="true">1</span>
+        <span class="step-text">
+          <span class="step-name">Groups</span>
+          <span class="step-sub">predict &amp; project</span>
+        </span>
+      </button>
+      <span class="step-line" aria-hidden="true"></span>
+      <button class="step" role="tab" id="tab-knockout" data-tab="knockout" aria-controls="panel-knockout" aria-selected="false" tabindex="-1">
+        <span class="step-num" aria-hidden="true">2</span>
+        <span class="step-text">
+          <span class="step-name">Knockout</span>
+          <span class="step-sub">build the bracket</span>
+        </span>
+      </button>
+      <span class="step-line" aria-hidden="true"></span>
+      <button class="step" role="tab" id="tab-odds" data-tab="odds" aria-controls="panel-odds" aria-selected="false" tabindex="-1">
+        <span class="step-num" aria-hidden="true">3</span>
+        <span class="step-text">
+          <span class="step-name">Title odds</span>
+          <span class="step-sub">run the sim</span>
+        </span>
+      </button>
     </nav>
 
     <main>
-      <section id="panel-predict" class="panel" role="tabpanel" aria-labelledby="tab-predict" tabindex="0"></section>
-      <section id="panel-tables" class="panel" role="tabpanel" aria-labelledby="tab-tables" tabindex="0" hidden></section>
+      <section id="panel-groups" class="panel" role="tabpanel" aria-labelledby="tab-groups" tabindex="0"></section>
       <section id="panel-knockout" class="panel" role="tabpanel" aria-labelledby="tab-knockout" tabindex="0" hidden></section>
       <section id="panel-odds" class="panel" role="tabpanel" aria-labelledby="tab-odds" tabindex="0" hidden></section>
     </main>

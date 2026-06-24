@@ -8,8 +8,9 @@
   color-scheme: dark;
   accent-color: var(--accent);
 
-  /* One tone for the page and every moulded surface. */
-  --bg: #232b40;
+  /* One tone for the page and every moulded surface. A deep, saturated indigo
+     gives the vibrant tournament palette more room to glow. */
+  --bg: #1b2139;
   --surface: var(--bg);
 
   /* Soft-UI highlight/shadow pair, derived from --bg so the whole moulded
@@ -25,11 +26,12 @@
   --accent: #2ee6a6; /* pitch green */
   --accent-2: #ffce4d; /* trophy gold */
   --accent-3: #ff5d8f; /* magenta */
+  --accent-4: #8b7bff; /* electric violet */
   --info: #5aa7ff;
 
-  --qualify: rgba(46, 230, 166, 0.16);
+  --qualify: rgba(46, 230, 166, 0.2);
   --qualify-line: #2ee6a6;
-  --third: rgba(255, 206, 77, 0.14);
+  --third: rgba(255, 206, 77, 0.17);
   --third-line: #ffce4d;
   --out: rgba(255, 93, 143, 0.09);
 
@@ -67,10 +69,13 @@ body {
   min-block-size: 100dvb;
   font-family: var(--font);
   color: var(--text);
-  /* Near-flat base with the faintest top glow — a busy background would break
-     the moulded illusion the soft shadows depend on. */
+  /* Low-opacity colour glows give the page tournament energy while staying
+     faint enough to preserve the moulded soft-UI illusion. */
   background:
-    radial-gradient(1200px 720px at 50% -12%, color-mix(in srgb, var(--bg), #ffffff 5%), transparent 60%),
+    radial-gradient(820px 560px at 6% -8%, rgba(46, 230, 166, 0.12), transparent 60%),
+    radial-gradient(820px 560px at 100% -4%, rgba(255, 93, 143, 0.12), transparent 58%),
+    radial-gradient(1000px 680px at 50% 116%, rgba(90, 167, 255, 0.1), transparent 60%),
+    radial-gradient(1200px 720px at 50% -12%, color-mix(in srgb, var(--bg), #ffffff 4%), transparent 60%),
     var(--bg);
   background-attachment: fixed;
   line-height: 1.5;
@@ -160,6 +165,7 @@ body {
 .seed-field input:focus-visible,
 .runs-field select:focus-visible,
 .tab:focus-visible,
+.step:focus-visible,
 .btn:focus-visible,
 .round-link:focus-visible,
 .bracket:focus-visible {
@@ -241,41 +247,111 @@ body {
   color: var(--accent-3);
 }
 
-.tab-bar {
+/* ---------- Guided stepper ---------- */
+
+.stepper {
   position: sticky;
   inset-block-start: 64px;
   z-index: 9;
   display: flex;
-  gap: 0.55rem;
+  align-items: center;
+  gap: 0.35rem;
   max-inline-size: 1200px;
   margin: 0.6rem auto 0;
-  padding: 0.55rem clamp(1rem, 4vw, 2.5rem) 0.7rem;
+  padding: 0.6rem clamp(1rem, 4vw, 2.5rem) 0.8rem;
   background: var(--bg);
   box-shadow: 0 14px 22px -18px var(--nm-dark);
 }
 
-/* Raised pills; the selected one lights up with the accent gradient. */
-.tab {
+.step {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   font: inherit;
-  font-weight: 600;
-  font-size: 0.95rem;
   color: var(--muted);
   background: var(--bg);
   border: none;
   border-radius: var(--radius-pill);
-  padding: 0.45rem 1.15rem;
+  padding: 0.45rem 0.95rem 0.45rem 0.55rem;
   cursor: pointer;
   box-shadow: var(--shadow-out-sm);
-  transition: color 0.15s ease, box-shadow 0.18s ease;
+  transition: color 0.15s ease, box-shadow 0.18s ease, transform 0.12s ease;
 }
 
-.tab:hover {
+.step:hover {
   color: var(--text);
+  transform: translateY(-1px);
 }
 
-.tab[aria-selected="true"] {
+.step-num {
+  display: grid;
+  place-items: center;
+  inline-size: 1.7rem;
+  block-size: 1.7rem;
+  border-radius: 50%;
+  font-weight: 800;
+  font-size: 0.85rem;
+  color: var(--faint);
+  background: var(--bg);
+  box-shadow: var(--shadow-in-sm);
+  transition: color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.step-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.12;
+  text-align: start;
+}
+
+.step-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.step-sub {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+
+/* The selected step lights up with the accent gradient. */
+.step[aria-selected="true"] {
   color: #04231a;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: var(--shadow-out-sm), 0 10px 22px -10px rgba(46, 230, 166, 0.5);
+}
+
+.step[aria-selected="true"] .step-num {
+  color: #04231a;
+  background: rgba(255, 255, 255, 0.32);
+  box-shadow: none;
+}
+
+.step[aria-selected="true"] .step-sub {
+  color: rgba(4, 35, 26, 0.72);
+}
+
+/* A completed step turns its badge green, even when not selected. */
+.step.done:not([aria-selected="true"]) .step-num {
+  color: #04231a;
+  background: linear-gradient(135deg, var(--accent), #38d0bf);
+  box-shadow: none;
+}
+
+/* Connector line between steps; fills once the preceding step is done. */
+.step-line {
+  flex: 1;
+  block-size: 3px;
+  min-inline-size: 10px;
+  border-radius: 2px;
+  background: var(--divider);
+  transition: background 0.3s ease;
+}
+
+.step.done + .step-line {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
 }
 
 /* ---------- Panels ---------- */
@@ -327,16 +403,32 @@ main {
 
 .group-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  /* Wide enough that on a typical desktop the cards land two-up, giving each
+     one room to show its fixtures and live table side by side. */
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
   gap: 1.4rem;
 }
 
 .group-card {
+  position: relative;
+  container-type: inline-size;
   background: var(--surface);
   border-radius: var(--radius);
-  padding: 1rem 1.05rem 0.8rem;
+  padding: 1rem 1.05rem 0.85rem;
   box-shadow: var(--shadow-out);
+  overflow: hidden;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Vibrant accent ribbon along the top edge of every group card. */
+.group-card::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2) 55%, var(--accent-3));
+  opacity: 0.85;
 }
 
 .group-card:hover {
@@ -344,11 +436,66 @@ main {
 }
 
 .group-card h3 {
-  margin: 0 0 0.6rem;
+  margin: 0;
   font-size: 0.95rem;
   letter-spacing: 0.04em;
   color: var(--muted);
   text-transform: uppercase;
+}
+
+/* Merged group card: fixtures and the live table together. */
+.group-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-block-end: 0.7rem;
+}
+
+.grp-pill {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  background: var(--bg);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-in-sm);
+  white-space: nowrap;
+}
+
+.grp-pill .grp-pill-num {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.grp-pill.is-complete {
+  color: #04231a;
+  background: linear-gradient(135deg, var(--accent), #38d0bf);
+  box-shadow: none;
+}
+
+.group-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.7rem;
+}
+
+/* When a card is wide enough, sit the fixtures and the live table side by side. */
+@container (min-width: 460px) {
+  .group-body {
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 1.1rem;
+  }
+}
+
+.standings-col {
+  min-inline-size: 0;
+}
+
+.standings-col table.standings {
+  margin-block-start: 0.1rem;
 }
 
 .group-card h3 .badge {
@@ -965,8 +1112,19 @@ details.fixtures summary {
 }
 
 @media (max-width: 560px) {
-  .tab-bar {
+  .stepper {
     inset-block-start: 0;
+    gap: 0.2rem;
+    padding-inline: clamp(0.6rem, 3vw, 2.5rem);
+  }
+  .step {
+    padding: 0.4rem 0.55rem;
+  }
+  .step-sub {
+    display: none;
+  }
+  .step-name {
+    font-size: 0.82rem;
   }
   .controls {
     inline-size: 100%;
@@ -997,7 +1155,70 @@ details.fixtures summary {
   gap: 0.7rem 1rem;
 }
 
-.stat-chip,
+/* Progress hero: a prominent count + bar showing how far the player has got. */
+.progress-hero {
+  flex: 1 1 16rem;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.95rem 0.7rem;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(46, 230, 166, 0.12), transparent 60%),
+    var(--surface);
+  box-shadow: var(--shadow-out-sm);
+}
+
+.progress-top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.progress-count {
+  font-size: 1.6rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.progress-of {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.progress-groups {
+  margin-inline-start: auto;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.progress-track {
+  block-size: 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  overflow: hidden;
+  box-shadow: var(--shadow-in-sm);
+}
+
+.progress-fill {
+  display: block;
+  block-size: 100%;
+  inline-size: var(--w, 0%);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: inline-size 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .champ-chip {
   display: flex;
   align-items: center;
@@ -1006,36 +1227,6 @@ details.fixtures summary {
   border-radius: var(--radius-pill);
   background: var(--surface);
   box-shadow: var(--shadow-out-sm);
-}
-
-.stat-num {
-  font-size: 1.15rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  color: var(--accent);
-}
-
-.stat-label {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.mini-bar {
-  inline-size: 5rem;
-  block-size: 0.5rem;
-  border-radius: var(--radius-pill);
-  background: var(--bg);
-  overflow: hidden;
-  box-shadow: var(--shadow-in-sm);
-}
-
-.mini-fill {
-  display: block;
-  block-size: 100%;
-  inline-size: var(--w, 0%);
-  border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  transition: inline-size 0.35s ease;
 }
 
 .champ-label {
@@ -1405,6 +1596,8 @@ button.match-row:focus-visible {
 @media (forced-colors: active) {
   .btn,
   .tab,
+  .step,
+  .step-num,
   .round-link,
   .seed-field input,
   .runs-field select,
@@ -1419,6 +1612,7 @@ button.match-row:focus-visible {
   }
 
   .tab[aria-selected="true"],
+  .step[aria-selected="true"],
   .round-link.active {
     border-color: Highlight;
   }
@@ -1428,6 +1622,49 @@ button.match-row:focus-visible {
   }
 }
 
+.third-name {
+  min-inline-size: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Stage view transitions ---------- */
+
+/* Slide the outgoing/incoming stage in the direction of travel (a class is set
+   on <html> just before the transition). Progressive enhancement: browsers
+   without the View Transitions API simply swap stages instantly. */
+::view-transition-group(root) {
+  animation-duration: 0.35s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes stage-out-left {
+  to { transform: translateX(-40px); opacity: 0; }
+}
+@keyframes stage-in-right {
+  from { transform: translateX(40px); opacity: 0; }
+}
+@keyframes stage-out-right {
+  to { transform: translateX(40px); opacity: 0; }
+}
+@keyframes stage-in-left {
+  from { transform: translateX(-40px); opacity: 0; }
+}
+
+html.vt-forward::view-transition-old(root) {
+  animation-name: stage-out-left;
+}
+html.vt-forward::view-transition-new(root) {
+  animation-name: stage-in-right;
+}
+html.vt-backward::view-transition-old(root) {
+  animation-name: stage-out-right;
+}
+html.vt-backward::view-transition-new(root) {
+  animation-name: stage-in-left;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1435,5 +1672,11 @@ button.match-row:focus-visible {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

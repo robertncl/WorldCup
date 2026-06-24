@@ -24,15 +24,18 @@ let championPick = localStorage.getItem(CHAMP_KEY) ?? "";
 
 // Knockout picks: which team the player advances out of each bracket tie, keyed
 // by a stable round-match slot (e.g. "0-3" or "3p"). A pick only takes effect
-// while it still names one of that tie's two current teams, so it survives
-// group-prediction edits that leave the matchup unchanged and is ignored
-// otherwise.
+// while it still names one of that tie's two current teams.
 let knockoutPicks: Record<string, string> = loadKnockout();
 let lastChampionShown = ""; // champion the bracket last celebrated, to fire confetti once
 
 // Odds are computed on demand; flag them stale when predictions change.
 let lastOdds: OddsResult | null = null;
 let oddsStale = false;
+
+// The three-step guided flow.
+const stageOrder = ["groups", "knockout", "odds"] as const;
+type Stage = (typeof stageOrder)[number];
+let currentStage: Stage = "groups";
 
 function loadPredictions(): Record<string, Prediction> {
   try {
@@ -85,8 +88,7 @@ const els = {
   summary: $<HTMLDivElement>("#summary"),
   status: $<HTMLDivElement>("#status"),
   panels: {
-    predict: $<HTMLElement>("#panel-predict"),
-    tables: $<HTMLElement>("#panel-tables"),
+    groups: $<HTMLElement>("#panel-groups"),
     knockout: $<HTMLElement>("#panel-knockout"),
     odds: $<HTMLElement>("#panel-odds"),
   },
@@ -110,39 +112,118 @@ function setStatus(message: string, kind: "info" | "error" = "info"): void {
   els.status.classList.toggle("show", message !== "");
 }
 
-// ---------- Tabs ----------
+// ---------- Motion ----------
 
-function setupTabs(): void {
-  const tabs = [...document.querySelectorAll<HTMLButtonElement>(".tab")];
-  tabs.forEach((tab) => {
-    tab.addEventListener("click", () => activateTab(tab.dataset.tab ?? "predict"));
-    tab.addEventListener("keydown", (e) => {
-      const idx = tabs.indexOf(tab);
+const reducedMotion = (): boolean => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// navigate runs a DOM update inside a directional View Transition so stages
+// slide in from the side the user is heading (forward = from the right). Falls
+// back to an instant update when the API is unavailable or motion is reduced.
+function navigate(update: () => void, direction: "forward" | "backward"): void {
+  const start = (document as Document & {
+    startViewTransition?: (cb: () => void) => { finished: Promise<void> };
+  }).startViewTransition;
+  if (reducedMotion() || !start) {
+    update();
+    return;
+  }
+  const root = document.documentElement;
+  root.classList.add(`vt-${direction}`);
+  const vt = start.call(document, update);
+  vt.finished.finally(() => root.classList.remove(`vt-${direction}`));
+}
+
+// flip animates list reordering with the FLIP technique: measure each tagged
+// row, mutate the DOM, then play the inverse transform out. Unlike a View
+// Transition it never freezes the page, so it stays smooth while the player is
+// typing scores. Rows are matched by their data-vtkey.
+function flip(container: HTMLElement, mutate: () => void): void {
+  if (reducedMotion()) {
+    mutate();
+    return;
+  }
+  const first = new Map<string, number>();
+  for (const el of container.querySelectorAll<HTMLElement>("[data-vtkey]")) {
+    first.set(el.dataset.vtkey!, el.getBoundingClientRect().top);
+  }
+  mutate();
+  for (const el of container.querySelectorAll<HTMLElement>("[data-vtkey]")) {
+    const prev = first.get(el.dataset.vtkey!);
+    if (prev == null) continue;
+    const dy = prev - el.getBoundingClientRect().top;
+    if (!dy) continue;
+    el.animate(
+      [{ transform: `translateY(${dy}px)` }, { transform: "translateY(0)" }],
+      { duration: 340, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+    );
+  }
+}
+
+// ---------- Stepper navigation ----------
+
+function setupStepper(): void {
+  const steps = [...document.querySelectorAll<HTMLButtonElement>(".step")];
+  steps.forEach((step) => {
+    step.addEventListener("click", () => activateTab(step.dataset.tab ?? "groups"));
+    step.addEventListener("keydown", (e) => {
+      const idx = steps.indexOf(step);
       let next = -1;
-      if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % tabs.length;
-      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx - 1 + tabs.length) % tabs.length;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % steps.length;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx - 1 + steps.length) % steps.length;
       else if (e.key === "Home") next = 0;
-      else if (e.key === "End") next = tabs.length - 1;
+      else if (e.key === "End") next = steps.length - 1;
       else return;
       e.preventDefault();
-      const target = tabs[next];
-      activateTab(target.dataset.tab ?? "predict");
+      const target = steps[next];
+      activateTab(target.dataset.tab ?? "groups");
       target.focus();
     });
   });
 }
 
 function activateTab(name: string): void {
-  for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
-    const selected = tab.dataset.tab === name;
-    tab.setAttribute("aria-selected", String(selected));
-    tab.tabIndex = selected ? 0 : -1;
+  const stage = (stageOrder as readonly string[]).includes(name) ? (name as Stage) : "groups";
+  if (stage === currentStage) {
+    renderStage(stage);
+    return;
+  }
+  const direction = stageOrder.indexOf(stage) > stageOrder.indexOf(currentStage) ? "forward" : "backward";
+  navigate(() => {
+    currentStage = stage;
+    applyStageSelection(stage);
+    renderStage(stage);
+  }, direction);
+}
+
+function applyStageSelection(name: Stage): void {
+  for (const step of document.querySelectorAll<HTMLButtonElement>(".step")) {
+    const selected = step.dataset.tab === name;
+    step.setAttribute("aria-selected", String(selected));
+    step.tabIndex = selected ? 0 : -1;
   }
   for (const [key, panel] of Object.entries(els.panels)) {
     panel.hidden = key !== name;
   }
-  if (name === "tables") renderTables();
-  if (name === "knockout") renderKnockout();
+}
+
+function renderStage(name: Stage): void {
+  if (name === "groups") renderAllStandings();
+  else if (name === "knockout") renderKnockout();
+  else if (name === "odds") renderOdds();
+}
+
+// updateStepper reflects how far the player has progressed: a step is "done"
+// once its work is complete (all groups decided, a champion crowned, odds run).
+function updateStepper(): void {
+  const groupsDone = state.groups.length > 0 && state.groups.every((l) => projectGroup(l).decided === 6);
+  const done: Record<Stage, boolean> = {
+    groups: groupsDone,
+    knockout: !!buildBracket()?.champion,
+    odds: !!lastOdds,
+  };
+  for (const step of document.querySelectorAll<HTMLElement>(".step")) {
+    step.classList.toggle("done", !!done[step.dataset.tab as Stage]);
+  }
 }
 
 // ---------- Result projection ----------
@@ -227,43 +308,46 @@ function thirdPlaceRanking(groupTables: Map<string, Row[]>): { ordered: Row[]; q
   return { ordered: thirds, qualified };
 }
 
-// ---------- Predict tab ----------
+// ---------- Groups stage (predict + live tables) ----------
 
-function renderPredict(): void {
+function renderGroups(): void {
   const grid = h("div", { class: "group-grid" });
-  for (const letter of state.groups) {
-    grid.append(predictCard(letter));
-  }
+  for (const letter of state.groups) grid.append(groupCard(letter));
 
-  els.panels.predict.replaceChildren(
+  els.panels.groups.replaceChildren(
     h(
       "div",
       { class: "section-title" },
-      h("h2", {}, "Predict the matches"),
-      h("span", { class: "hint" }, "Locked scores are real results · type your score in the open matches"),
+      h("h2", {}, "Groups"),
+      h("span", { class: "hint" }, "Type a score in each open match — the tables update live as you go"),
     ),
     scoringCard(),
     grid,
+    h("div", { id: "third-race", class: "third-race-host" }),
   );
+  renderAllStandings();
 }
 
-function predictCard(letter: string): HTMLElement {
+function groupCard(letter: string): HTMLElement {
   const fixtures = state.fixtures.filter((f) => f.group === letter);
-  const playedCount = fixtures.filter((f) => f.played).length;
-  const card = h(
-    "div",
-    { class: "group-card predict-card" },
-    h(
-      "h3",
-      {},
-      `Group ${letter}`,
-      h("span", { class: "played-tag" }, `${playedCount}/6 played`),
-    ),
-  );
   const list = h("div", { class: "fixture-list" });
   for (const f of fixtures) list.append(fixtureRow(f));
-  card.append(list);
-  return card;
+  return h(
+    "div",
+    { class: "group-card group-merged", "data-group": letter },
+    h(
+      "div",
+      { class: "group-card-head" },
+      h("h3", {}, `Group ${letter}`),
+      h("span", { class: "grp-pill", id: `gp-${letter}` }),
+    ),
+    h(
+      "div",
+      { class: "group-body" },
+      h("div", { class: "predict-col" }, list),
+      h("div", { class: "standings-col", id: `st-${letter}` }),
+    ),
+  );
 }
 
 function fixtureRow(f: Fixture): HTMLElement {
@@ -338,7 +422,9 @@ function onGoalInput(e: Event): void {
   }
   savePredictions();
   oddsStale = true;
-  refreshDerived();
+  card.classList.toggle("filled", home != null && away != null);
+  updateStandings();
+  renderSummary();
 }
 
 function clampGoals(raw: string): number | null {
@@ -361,7 +447,7 @@ function scoringCard(): HTMLElement {
         {},
         "The group results played so far are imported as the baseline and locked. " +
           "Predict the scoreline of every remaining match to project the final tables, " +
-          "see who qualifies, and run your title odds.",
+          "build the knockout bracket, and run your title odds.",
       ),
       h(
         "ul",
@@ -375,41 +461,53 @@ function scoringCard(): HTMLElement {
   );
 }
 
-// ---------- Group tables tab ----------
+// renderAllStandings refreshes every group's live table, its completion pill,
+// and the third-place race from the current predictions. Called surgically so
+// the score inputs the player is typing into are never rebuilt.
+function renderAllStandings(): void {
+  const projs = new Map<string, { rows: Row[]; total: number; decided: number }>();
+  for (const letter of state.groups) projs.set(letter, projectGroup(letter));
+  const tablesMap = new Map<string, Row[]>();
+  for (const [letter, p] of projs) tablesMap.set(letter, p.rows);
+  const { ordered, qualified } = thirdPlaceRanking(tablesMap);
 
-function renderTables(): void {
-  const groupTables = new Map<string, Row[]>();
-  for (const letter of state.groups) groupTables.set(letter, projectGroup(letter).rows);
-  const { ordered, qualified } = thirdPlaceRanking(groupTables);
-
-  const grid = h("div", { class: "group-grid" });
   for (const letter of state.groups) {
-    grid.append(tableCard(letter, projectGroup(letter), qualified));
+    const proj = projs.get(letter)!;
+    const host = document.getElementById(`st-${letter}`);
+    if (host) host.replaceChildren(standingsTable(letter, proj, qualified));
+    const pill = document.getElementById(`gp-${letter}`);
+    if (pill) renderGroupPill(pill, proj);
   }
+  const race = document.getElementById("third-race");
+  if (race) race.replaceChildren(thirdPlaceCard(ordered, qualified));
+}
 
-  els.panels.tables.replaceChildren(
-    h(
-      "div",
-      { class: "section-title" },
-      h("h2", {}, "Projected group tables"),
-      h("span", { class: "hint" }, "Real results + your picks · top 2 advance, best 8 third-placed teams join them"),
-    ),
-    grid,
-    thirdPlaceCard(ordered, qualified),
+function renderGroupPill(pill: HTMLElement, proj: { decided: number; total: number }): void {
+  const complete = proj.decided >= proj.total;
+  pill.classList.toggle("is-complete", complete);
+  pill.replaceChildren(
+    complete
+      ? h("span", {}, "✓ Complete")
+      : h(
+          "span",
+          {},
+          h("span", { class: "grp-pill-num" }, `${proj.decided}`),
+          ` / ${proj.total} decided`,
+        ),
   );
 }
 
-function tableCard(letter: string, proj: { rows: Row[]; total: number; decided: number }, qualifiedThirds: Set<string>): HTMLElement {
-  const card = h(
-    "div",
-    { class: "group-card" },
-    h(
-      "h3",
-      {},
-      `Group ${letter}`,
-      h("span", { class: "played-tag" }, proj.decided < proj.total ? `${proj.decided}/${proj.total} decided` : "complete"),
-    ),
-  );
+// updateStandings re-renders the live tables, sliding any rows that change
+// position into place (FLIP) without disturbing the inputs.
+function updateStandings(): void {
+  flip(els.panels.groups, renderAllStandings);
+}
+
+function standingsTable(
+  letter: string,
+  proj: { rows: Row[]; total: number; decided: number },
+  qualifiedThirds: Set<string>,
+): HTMLElement {
   const table = h("table", { class: "standings" });
   table.append(
     h(
@@ -418,9 +516,6 @@ function tableCard(letter: string, proj: { rows: Row[]; total: number; decided: 
       h("th", {}, "#"),
       h("th", { class: "team-col" }, "Team"),
       h("th", {}, "P"),
-      h("th", {}, "W"),
-      h("th", {}, "D"),
-      h("th", {}, "L"),
       h("th", {}, "GD"),
       h("th", {}, "Pts"),
     ),
@@ -438,20 +533,16 @@ function tableCard(letter: string, proj: { rows: Row[]; total: number; decided: 
     table.append(
       h(
         "tr",
-        { class: rowClass },
+        { class: rowClass, "data-team": r.team, "data-group": letter, "data-vtkey": `r-${letter}-${r.team}` },
         h("td", { class: "row-pos" }, String(r.rank)),
         teamTd,
         h("td", {}, String(r.played)),
-        h("td", {}, String(r.won)),
-        h("td", {}, String(r.drawn)),
-        h("td", {}, String(r.lost)),
         h("td", {}, r.gd > 0 ? `+${r.gd}` : String(r.gd)),
         h("td", { class: "pts" }, String(r.points)),
       ),
     );
   }
-  card.append(table);
-  return card;
+  return table;
 }
 
 function thirdPlaceCard(ordered: Row[], qualified: Set<string>): HTMLElement {
@@ -460,10 +551,10 @@ function thirdPlaceCard(ordered: Row[], qualified: Set<string>): HTMLElement {
     list.append(
       h(
         "div",
-        { class: qualified.has(r.team) ? "third-item q" : "third-item" },
+        { class: qualified.has(r.team) ? "third-item q" : "third-item", "data-vtkey": `t-${r.team}` },
         h("span", { class: "pos" }, String(i + 1)),
         h("span", { class: "flag", "aria-hidden": "true" }, flagOf(r.team)),
-        h("span", {}, `${nameOf(r.team)} (${r.group})`),
+        h("span", { class: "third-name" }, `${nameOf(r.team)} (${r.group})`),
         h("span", { class: "pts" }, `${r.points} pts · ${r.gd > 0 ? "+" : ""}${r.gd}`),
       ),
     );
@@ -476,7 +567,7 @@ function thirdPlaceCard(ordered: Row[], qualified: Set<string>): HTMLElement {
   );
 }
 
-// ---------- Knockout bracket tab ----------
+// ---------- Knockout bracket stage ----------
 
 // Standard single-elimination seeding for 32 teams: each of the 32 bracket
 // slots maps to a seed number (1 = strongest) so top seeds only meet late.
@@ -525,8 +616,6 @@ function seedBracket(): string[] | null {
   winners.sort(betterRow);
   runnersUp.sort(betterRow);
   const bestThirds = [...thirds].sort(betterRow).slice(0, 8);
-  // Seeds 1..32 by tier (winners, then runners-up, then thirds), each tier
-  // ranked on record, exactly as the backend orders them.
   const seeds = [...winners, ...runnersUp, ...bestThirds];
   return bracketOrder.map((seedNo) => seeds[seedNo - 1].team);
 }
@@ -559,7 +648,6 @@ function buildBracket(): KoBracket | null {
   const final = rounds[rounds.length - 1][0];
   const runnerUp = loserOf(final);
 
-  // Third-place play-off between the two beaten semi-finalists.
   const semis = rounds[rounds.length - 2];
   const sfLosers = semis.map(loserOf);
   const tpPick = knockoutPicks["3p"];
@@ -706,7 +794,7 @@ function renderKnockoutLocked(): void {
         "div",
         { class: "ko-controls" },
         koControlBtn("✨ Auto-pick remaining", autopickRemaining),
-        koControlBtn("Go to Predict", () => activateTab("predict")),
+        koControlBtn("← Back to Groups", () => activateTab("groups")),
       ),
     ),
   );
@@ -734,8 +822,6 @@ function syncChampionFromBracket(champion?: string): void {
 }
 
 function autofillBracket(): void {
-  // Walk the rounds, settling every tie whose two teams are known in favour of
-  // the higher-rated side, so later rounds fill once their feeders are decided.
   for (let pass = 0; pass < koRoundNames.length; pass++) {
     const b = buildBracket();
     if (!b) return;
@@ -772,15 +858,15 @@ function autopickRemaining(): void {
   }
   savePredictions();
   oddsStale = true;
-  renderPredict();
-  refreshDerived();
+  renderGroups();
+  renderSummary();
   renderKnockout();
   setStatus("Filled the remaining group matches — the knockout bracket is unlocked.");
 }
 
 // confettiBurst sprays a quick shower of confetti from the top of the viewport.
 function confettiBurst(): void {
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (reducedMotion()) return;
   const layer = h("div", { class: "confetti-layer", "aria-hidden": "true" });
   const colors = ["#2ee6a6", "#ffce4d", "#ff5d8f", "#5aa7ff"];
   for (let i = 0; i < 80; i++) {
@@ -799,7 +885,7 @@ function confettiBurst(): void {
   setTimeout(() => layer.remove(), 3200);
 }
 
-// ---------- Title odds tab ----------
+// ---------- Title odds stage ----------
 
 function renderOddsControls(): HTMLElement {
   const runs = h(
@@ -832,7 +918,7 @@ async function runOddsNow(): Promise<void> {
   try {
     lastOdds = await runOdds(preds, runs);
     oddsStale = false;
-    renderOdds();
+    flip(els.panels.odds, renderOdds); // slide teams into their new ranking
     const top = lastOdds.odds[0];
     setStatus(top ? `Favourite: ${flagOf(top.team)} ${nameOf(top.team)} at ${pct(top.champion)} over ${lastOdds.runs.toLocaleString()} runs.` : "Done.");
   } catch (err) {
@@ -890,7 +976,7 @@ function renderOdds(): void {
     const width = o.champion > 0 ? Math.max(2, (o.champion / max) * 100) : 0;
     const row = h(
       "div",
-      { class: o.team === championPick ? "odds-row mine" : "odds-row" },
+      { class: o.team === championPick ? "odds-row mine" : "odds-row", "data-vtkey": `o-${o.team}` },
       h("span", { class: "rank" }, String(i + 1)),
       h(
         "span",
@@ -907,12 +993,13 @@ function renderOdds(): void {
   els.panels.odds.replaceChildren(...children);
 }
 
-// ---------- Summary / champion picker ----------
+// ---------- Summary / progress hero ----------
 
 function renderSummary(): void {
   const predicted = openFixtures.filter((f) => predictions[f.id]).length;
   const total = openFixtures.length;
   const ratio = total ? predicted / total : 0;
+  const groupsDone = state.groups.filter((l) => projectGroup(l).decided === 6).length;
 
   const champSelect = h("select", { id: "champion-select", "aria-label": "Pick your champion" }) as HTMLSelectElement;
   champSelect.append(h("option", { value: "" }, "— pick a champion —"));
@@ -937,23 +1024,20 @@ function renderSummary(): void {
       { class: "summary-inner" },
       h(
         "div",
-        { class: "stat-chip" },
-        h("span", { class: "stat-num" }, `${predicted}`),
-        h("span", { class: "stat-label" }, `/ ${total} matches predicted`),
-        h("span", { class: "mini-bar" }, h("span", { class: "mini-fill", style: `--w:${ratio * 100}%` })),
+        { class: "progress-hero" },
+        h(
+          "div",
+          { class: "progress-top" },
+          h("span", { class: "progress-count" }, `${predicted}`),
+          h("span", { class: "progress-of" }, `/ ${total} matches predicted`),
+          h("span", { class: "progress-groups" }, `${groupsDone}/12 groups complete`),
+        ),
+        h("div", { class: "progress-track" }, h("span", { class: "progress-fill", style: `--w:${ratio * 100}%` })),
       ),
-      h("label", { class: "champ-chip" }, h("span", { class: "champ-label" }, "🏆 Your champion"), champSelect),
+      h("label", { class: "champ-chip" }, h("span", { class: "champ-label" }, "🏆 Champion"), champSelect),
     ),
   );
-}
-
-// refreshDerived updates everything that depends on the current predictions
-// without disturbing the prediction inputs the player is typing into.
-function refreshDerived(): void {
-  renderSummary();
-  if (!els.panels.tables.hidden) renderTables();
-  if (!els.panels.knockout.hidden) renderKnockout();
-  if (lastOdds && oddsStale && !els.panels.odds.hidden) renderOdds();
+  updateStepper();
 }
 
 // ---------- Actions ----------
@@ -975,7 +1059,7 @@ function autopickAll(): void {
   }
   savePredictions();
   oddsStale = true;
-  renderPredict();
+  renderGroups();
   refreshDerived();
   setStatus("Filled every open match from the team ratings — tweak any you disagree with.");
 }
@@ -984,9 +1068,17 @@ function clearPicks(): void {
   predictions = {};
   savePredictions();
   oddsStale = true;
-  renderPredict();
+  renderGroups();
   refreshDerived();
   setStatus("Cleared your predictions.");
+}
+
+// refreshDerived updates everything that depends on the current predictions
+// without disturbing the prediction inputs the player is typing into.
+function refreshDerived(): void {
+  renderSummary();
+  if (!els.panels.knockout.hidden) renderKnockout();
+  if (lastOdds && oddsStale && !els.panels.odds.hidden) renderOdds();
 }
 
 // ---------- Misc ----------
@@ -1000,7 +1092,7 @@ function shortDate(iso: string): string {
 // ---------- Boot ----------
 
 async function init(): Promise<void> {
-  setupTabs();
+  setupStepper();
   els.autopick.addEventListener("click", autopickAll);
   els.clear.addEventListener("click", clearPicks);
 
@@ -1017,10 +1109,9 @@ async function init(): Promise<void> {
 
     els.asOf.textContent = state.asOf ? `· results imported ${shortDate(state.asOf)}` : "";
 
-    renderPredict();
+    renderGroups();
     renderSummary();
-    renderOdds();
-    setStatus(`${openFixtures.length} matches still to play — predict them, then check your title odds.`);
+    setStatus(`${openFixtures.length} matches still to play — predict them, build your bracket, then run your title odds.`);
   } catch (err) {
     console.error(err);
     setStatus("Couldn't load the tournament from the API. Is the Go server running?", "error");
