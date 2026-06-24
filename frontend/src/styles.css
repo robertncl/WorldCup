@@ -820,6 +820,8 @@ details.fixtures summary {
 }
 
 .match-row .name {
+  flex: 1;
+  min-inline-size: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -858,6 +860,48 @@ details.fixtures summary {
 .third-place-card .round-title {
   position: static;
   text-align: start;
+}
+
+/* ---------- Two-sided bracket ---------- */
+
+/* Left half flows inward to the right, right half mirrors inward to the left,
+   and the final sits in the centre column between the two semi-finals. */
+.bracket.two-sided {
+  align-items: stretch;
+  /* Nine columns fit far better with a tight gap than the wide default. */
+  gap: 0.5rem;
+}
+
+.bracket.two-sided .round {
+  flex: 1 1 122px;
+  min-inline-size: 100px;
+}
+
+.bracket.two-sided .final-col {
+  flex: 1.4 1 168px;
+  min-inline-size: 150px;
+  justify-content: center;
+  gap: 1.3rem;
+}
+
+.final-col .third-place-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.final-col .third-title {
+  color: var(--accent-2);
+}
+
+/* Mirror the right half so each tie reads inward toward the final. */
+.round.right .match-row {
+  flex-direction: row-reverse;
+  text-align: end;
+}
+
+.round.right .match-row.winner {
+  box-shadow: inset -3px 0 0 var(--accent);
 }
 
 /* ---------- Odds ---------- */

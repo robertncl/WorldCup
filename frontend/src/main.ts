@@ -707,24 +707,47 @@ function renderKnockout(): void {
     children.push(koPodium(bracket.champion, bracket.runnerUp!, bracket.third));
   }
 
-  const rail = h("div", { class: "bracket", tabindex: "0", "aria-label": "Knockout bracket" });
-  bracket.rounds.forEach((matches, r) => {
-    const round = h("div", { class: "round" }, h("div", { class: "round-title" }, koRoundNames[r]));
-    for (const m of matches) round.append(koMatchEl(m, r === bracket.rounds.length - 1));
-    rail.append(round);
+  // Two-sided bracket: the left half of the draw flows right, the right half is
+  // mirrored and flows left, and the final sits in the middle.
+  const rail = h("div", { class: "bracket two-sided", tabindex: "0", "aria-label": "Knockout bracket" });
+  const sideRounds = bracket.rounds.slice(0, -1); // Round of 32 … Semi-finals
+
+  sideRounds.forEach((matches, r) => {
+    rail.append(koRoundColumn(koRoundNames[r], matches.slice(0, matches.length / 2), "left"));
   });
+  rail.append(koFinalColumn(bracket));
+  for (let r = sideRounds.length - 1; r >= 0; r--) {
+    const matches = sideRounds[r];
+    rail.append(koRoundColumn(koRoundNames[r], matches.slice(matches.length / 2), "right"));
+  }
   children.push(rail);
 
-  children.push(
+  els.panels.knockout.replaceChildren(...children);
+}
+
+// koRoundColumn builds one round's column for a single side of the draw.
+function koRoundColumn(title: string, matches: KoMatch[], side: "left" | "right"): HTMLElement {
+  const round = h("div", { class: `round ${side}` }, h("div", { class: "round-title" }, title));
+  for (const m of matches) round.append(koMatchEl(m, false));
+  return round;
+}
+
+// koFinalColumn is the centre column: the final, with the third-place play-off
+// tucked beneath it (the two beaten semi-finalists meet here).
+function koFinalColumn(bracket: KoBracket): HTMLElement {
+  const finalMatch = bracket.rounds[bracket.rounds.length - 1][0];
+  return h(
+    "div",
+    { class: "round final-col" },
+    h("div", { class: "round-title" }, "Final"),
+    koMatchEl(finalMatch, true),
     h(
       "div",
-      { class: "third-place-card" },
-      h("div", { class: "round-title" }, "Third-place play-off"),
+      { class: "third-place-inline" },
+      h("div", { class: "round-title third-title" }, "Third place"),
       koMatchEl(bracket.thirdPlace, false),
     ),
   );
-
-  els.panels.knockout.replaceChildren(...children);
 }
 
 // countDecided counts the settled ties (31 main bracket + the play-off = 32).
