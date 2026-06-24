@@ -106,32 +106,32 @@ var fixtures = []Fixture{
 	// Group I — France, Senegal, Norway, Iraq
 	played("I1", "I", "FRA", "SEN", "2026-06-16", 3, 1),
 	played("I2", "I", "IRQ", "NOR", "2026-06-16", 1, 4),
-	open("I3", "I", "FRA", "IRQ", "2026-06-22"),
-	open("I4", "I", "SEN", "NOR", "2026-06-22"),
+	played("I3", "I", "FRA", "IRQ", "2026-06-22", 3, 0),
+	played("I4", "I", "SEN", "NOR", "2026-06-22", 1, 1),
 	open("I5", "I", "FRA", "NOR", "2026-06-26"),
 	open("I6", "I", "SEN", "IRQ", "2026-06-26"),
 
 	// Group J — Argentina, Austria, Algeria, Jordan
 	played("J1", "J", "ARG", "ALG", "2026-06-16", 3, 0),
 	played("J2", "J", "AUT", "JOR", "2026-06-16", 3, 1),
-	open("J3", "J", "ARG", "AUT", "2026-06-22"),
-	open("J4", "J", "ALG", "JOR", "2026-06-22"),
+	played("J3", "J", "ARG", "AUT", "2026-06-22", 2, 0),
+	played("J4", "J", "ALG", "JOR", "2026-06-22", 2, 1),
 	open("J5", "J", "ARG", "JOR", "2026-06-26"),
 	open("J6", "J", "ALG", "AUT", "2026-06-26"),
 
 	// Group K — Portugal, Colombia, Uzbekistan, DR Congo
 	played("K1", "K", "POR", "COD", "2026-06-17", 1, 1),
 	played("K2", "K", "UZB", "COL", "2026-06-17", 1, 3),
-	open("K3", "K", "POR", "UZB", "2026-06-23"),
-	open("K4", "K", "COD", "COL", "2026-06-23"),
+	played("K3", "K", "POR", "UZB", "2026-06-23", 2, 0),
+	played("K4", "K", "COD", "COL", "2026-06-23", 1, 2),
 	open("K5", "K", "POR", "COL", "2026-06-26"),
 	open("K6", "K", "COD", "UZB", "2026-06-26"),
 
 	// Group L — England, Croatia, Ghana, Panama
 	played("L1", "L", "ENG", "CRO", "2026-06-17", 4, 2),
 	played("L2", "L", "GHA", "PAN", "2026-06-17", 1, 0),
-	open("L3", "L", "ENG", "GHA", "2026-06-23"),
-	open("L4", "L", "CRO", "PAN", "2026-06-23"),
+	played("L3", "L", "ENG", "GHA", "2026-06-23", 3, 0),
+	played("L4", "L", "CRO", "PAN", "2026-06-23", 2, 0),
 	open("L5", "L", "ENG", "PAN", "2026-06-26"),
 	open("L6", "L", "CRO", "GHA", "2026-06-26"),
 }
