@@ -609,7 +609,7 @@ function renderKnockout(): void {
     h(
       "div",
       { class: "ko-controls" },
-      h("span", { class: "ko-progress" }, `${decidedTies}/31 ties picked`),
+      h("span", { class: "ko-progress" }, `${decidedTies}/32 ties picked`),
       koControlBtn("✨ Auto-fill", autofillBracket),
       koControlBtn("↺ Clear bracket", clearBracket),
     ),
@@ -657,7 +657,7 @@ function koMatchEl(m: KoMatch, isFinal: boolean): HTMLElement {
 
 function koTeamRow(m: KoMatch, code?: string): HTMLElement {
   if (!code) {
-    return h("div", { class: "match-row placeholder" }, h("span", { class: "name" }, "—"));
+    return h("div", { class: "match-row tbd" }, h("span", { class: "name" }, "—"));
   }
   const isWinner = m.winner === code;
   const cls = "match-row pick" + (isWinner ? " winner" : "");

@@ -3,8 +3,9 @@
 A web app that turns the **48-team FIFA World Cup 2026** into a prediction game.
 The real group-stage results so far are **imported as the baseline** and locked;
 you predict every remaining match, watch the group tables project in real time,
-and run Monte Carlo **title odds** conditioned on the actual results plus your
-own picks. **Go** backend, **Bun + TypeScript** frontend.
+pick your way through the **knockout bracket**, and run Monte Carlo **title
+odds** conditioned on the actual results plus your own picks. **Go** backend,
+**Bun + TypeScript** frontend.
 
 - **Real baseline** — the actual groups and results through the import date are
   loaded as ground truth. Played matches are locked; only open matches are
@@ -15,6 +16,11 @@ own picks. **Go** backend, **Bun + TypeScript** frontend.
 - **Projected tables** — the group standings update live from the real results
   plus your predictions, highlighting who advances (top two of each group plus
   the eight best third-placed teams).
+- **Knockout bracket** — once every group match is filled in, the 32 qualifiers
+  are seeded into the bracket and you tap your way through each tie to a
+  champion. Picks are saved in your browser, an auto-fill button settles the
+  whole bracket from the team ratings, and your winner feeds the title-odds
+  callout.
 - **Conditional title odds** — run thousands of tournaments with the decided
   results held fixed to see each nation's chance to reach the knockout, the
   final, and lift the trophy in *your* scenario.
@@ -41,7 +47,8 @@ backend/    Go HTTP server + simulation engine (no external dependencies)
   internal/api/       JSON API + single-page app hosting
 frontend/   Bun-bundled TypeScript single-page app
   src/index.html      page shell (Bun HTML entrypoint)
-  src/main.ts         prediction UI, projected tables, localStorage picks
+  src/main.ts         prediction UI, projected tables, knockout bracket,
+                      localStorage picks
   src/api.ts          typed API client
   src/styles.css      dark neumorphism theme
 run.sh      build the frontend and start the server

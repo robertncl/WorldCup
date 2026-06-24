@@ -1388,7 +1388,7 @@ button.match-row:focus-visible {
   outline-offset: -2px;
 }
 
-.match-row.placeholder {
+.match-row.tbd {
   color: var(--faint);
   font-style: italic;
 }
