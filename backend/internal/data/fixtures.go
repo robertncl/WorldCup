@@ -3,7 +3,7 @@ package data
 // DataAsOf is the date the baseline results below were imported. Group-stage
 // fixtures with Played=true carry the real scoreline; the rest are still open
 // for the player to predict.
-const DataAsOf = "2026-06-22"
+const DataAsOf = "2026-06-23"
 
 // Result is a single match scoreline.
 type Result struct {
