@@ -722,7 +722,13 @@ function renderKnockout(): void {
   }
   children.push(rail);
 
+  // Keep the player's horizontal scroll position across re-renders (e.g. when
+  // picking a winner); the first time the bracket appears, centre it on the
+  // final so the middle of the draw is in view.
+  const prevRail = els.panels.knockout.querySelector<HTMLElement>(".bracket");
+  const prevScroll = prevRail ? prevRail.scrollLeft : null;
   els.panels.knockout.replaceChildren(...children);
+  rail.scrollLeft = prevScroll ?? Math.max(0, (rail.scrollWidth - rail.clientWidth) / 2);
 }
 
 // koRoundColumn builds one round's column for a single side of the draw.

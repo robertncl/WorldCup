@@ -820,11 +820,7 @@ details.fixtures summary {
 }
 
 .match-row .name {
-  flex: 1;
-  min-inline-size: 0;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--muted);
 }
 
@@ -868,18 +864,20 @@ details.fixtures summary {
    and the final sits in the centre column between the two semi-finals. */
 .bracket.two-sided {
   align-items: stretch;
-  /* Nine columns fit far better with a tight gap than the wide default. */
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 
+/* Size every column to its content so team names show in full; the bracket
+   scrolls horizontally inside its own box when the draw is wider than the page
+   (the surrounding page layout never overflows). */
 .bracket.two-sided .round {
-  flex: 1 1 122px;
-  min-inline-size: 100px;
+  flex: 0 0 auto;
+  min-inline-size: 150px;
 }
 
 .bracket.two-sided .final-col {
-  flex: 1.4 1 168px;
-  min-inline-size: 150px;
+  flex: 0 0 auto;
+  min-inline-size: 168px;
   justify-content: center;
   gap: 1.3rem;
 }
